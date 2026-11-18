@@ -1,0 +1,320 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user settings and active household pantry reference.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "activePantryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "personalPantryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "isAnonymous": {
+          "type": "boolean"
+        },
+        "notificationsEnabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "activePantryId", "personalPantryId", "isAnonymous", "createdAt", "updatedAt"]
+    },
+    "Pantry": {
+      "title": "Pantry",
+      "description": "A shared or private household pantry container.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "inviteCode": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 6,
+          "pattern": "^[0-9]{6}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "ownerId", "inviteCode", "createdAt", "updatedAt"]
+    },
+    "PantryMember": {
+      "title": "PantryMember",
+      "description": "Membership record controlling owner vs member access inside a pantry.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner", "member"]
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "isAnonymous": {
+          "type": "boolean"
+        },
+        "joinedViaCode": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 6,
+          "pattern": "^[0-9]{6}$"
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "role", "displayName", "isAnonymous", "joinedAt"]
+    },
+    "PantryInvite": {
+      "title": "PantryInvite",
+      "description": "6-digit invite code lookup document mapping to a pantry.",
+      "type": "object",
+      "properties": {
+        "inviteCode": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 6,
+          "pattern": "^[0-9]{6}$"
+        },
+        "pantryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pantryName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["inviteCode", "pantryId", "pantryName", "ownerId", "createdAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Tracked pantry, fridge, skincare, or medicine item with expiry and optional PAO.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Fridge", "Skincare", "Medicine"]
+        },
+        "expiryDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "printedExpiryDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "openedDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "paoMonths": {
+          "type": "integer"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "brand": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "barcode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "photoUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "category", "expiryDate", "createdBy", "createdAt", "updatedAt"]
+    },
+    "ShoppingListItem": {
+      "title": "ShoppingListItem",
+      "description": "Auto-restock or manually added shopping list item for a pantry.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Fridge", "Skincare", "Medicine"]
+        },
+        "checked": {
+          "type": "boolean"
+        },
+        "addedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "category", "checked", "addedBy", "createdAt", "updatedAt"]
+    },
+    "WasteEvent": {
+      "title": "WasteEvent",
+      "description": "Tracks whether a finished item was consumed or thrown away.",
+      "type": "object",
+      "properties": {
+        "itemName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Fridge", "Skincare", "Medicine"]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["consumed", "trashed"]
+        },
+        "recordedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "recordedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["itemName", "category", "outcome", "recordedBy", "recordedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile document private to each authenticated user."
+    },
+    "/pantries/{pantryId}": {
+      "schema": { "$ref": "#/entities/Pantry" },
+      "description": "Household pantry root documents."
+    },
+    "/pantries/{pantryId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/PantryMember" },
+      "description": "Member and owner roster for a household pantry."
+    },
+    "/invites/{inviteCode}": {
+      "schema": { "$ref": "#/entities/PantryInvite" },
+      "description": "6-digit invite code lookup records (get-only, never listable)."
+    },
+    "/pantries/{pantryId}/items/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Tracked expiry items belonging to a pantry."
+    },
+    "/pantries/{pantryId}/shoppingList/{shopItemId}": {
+      "schema": { "$ref": "#/entities/ShoppingListItem" },
+      "description": "Restock shopping list items belonging to a pantry."
+    },
+    "/pantries/{pantryId}/history/{eventId}": {
+      "schema": { "$ref": "#/entities/WasteEvent" },
+      "description": "Consumed vs trashed waste habit events belonging to a pantry."
+    }
+  }
+}

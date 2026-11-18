@@ -1,0 +1,8 @@
+{
+  "name": "Shelfline — Inventory & Pantry Expiry Checker",
+  "description": "Track expiration dates across your fridge, skincare, and medicine cabinet with instant visual freshness grouping.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

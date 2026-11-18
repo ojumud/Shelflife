@@ -1,0 +1,113 @@
+/**
+ * Security Rules Verification Spec for Shelfline Household Pantries
+ * Covers the "Dirty Dozen" adversarial payloads defined in security_spec.md.
+ * Run against Firebase Local Emulator Suite when testing rules locally.
+ */
+export const DIRTY_DOZEN_SECURITY_CASES = [
+  {
+    id: 1,
+    name: 'Unauthenticated item read',
+    auth: null,
+    operation: 'GET /pantries/pantry_1/items/item_1',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 2,
+    name: 'Non-member pantry item read',
+    auth: { uid: 'intruder_uid' },
+    operation: 'GET /pantries/pantry_1/items/item_1',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 3,
+    name: 'Blanket pantry listing',
+    auth: { uid: 'owner_uid' },
+    operation: 'LIST /pantries',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 4,
+    name: 'Blanket invite scraping',
+    auth: { uid: 'owner_uid' },
+    operation: 'LIST /invites',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 5,
+    name: 'Self-promote to owner on join',
+    auth: { uid: 'intruder_uid' },
+    operation: 'CREATE /pantries/pantry_1/members/intruder_uid',
+    payload: { uid: 'intruder_uid', role: 'owner', joinedViaCode: '482910' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 6,
+    name: 'Join with wrong 6-digit invite code',
+    auth: { uid: 'intruder_uid' },
+    operation: 'CREATE /pantries/pantry_1/members/intruder_uid',
+    payload: { uid: 'intruder_uid', role: 'member', joinedViaCode: '000000' },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 7,
+    name: 'Member deleting another member',
+    auth: { uid: 'member_uid' },
+    operation: 'DELETE /pantries/pantry_1/members/other_member_uid',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 8,
+    name: 'Member deleting owner pantry',
+    auth: { uid: 'member_uid' },
+    operation: 'DELETE /pantries/pantry_1',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 9,
+    name: 'Shadow field injection on item create',
+    auth: { uid: 'owner_uid' },
+    operation: 'CREATE /pantries/pantry_1/items/item_2',
+    payload: {
+      name: 'Milk',
+      category: 'Fridge',
+      expiryDate: '2026-12-01',
+      createdBy: 'owner_uid',
+      isAdmin: true,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 10,
+    name: 'Identity spoofing on item create',
+    auth: { uid: 'member_uid' },
+    operation: 'CREATE /pantries/pantry_1/items/item_3',
+    payload: {
+      name: 'Milk',
+      category: 'Fridge',
+      expiryDate: '2026-12-01',
+      createdBy: 'owner_uid',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 11,
+    name: 'Oversized or invalid document ID poisoning',
+    auth: { uid: 'owner_uid' },
+    operation: `CREATE /pantries/pantry_1/items/${'a'.repeat(140)}`,
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 12,
+    name: 'Client-forged createdAt timestamp',
+    auth: { uid: 'owner_uid' },
+    operation: 'CREATE /pantries/pantry_1/items/item_4',
+    payload: {
+      name: 'Serum',
+      category: 'Skincare',
+      expiryDate: '2027-01-01',
+      createdBy: 'owner_uid',
+      createdAt: '2020-01-01T00:00:00Z',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+] as const;

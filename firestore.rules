@@ -1,0 +1,314 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Global Hardened Primitives
+    // -------------------------------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidInviteCode(code) {
+      return code is string && code.size() == 6 && code.matches('^[0-9]{6}$');
+    }
+
+    function isValidDateString(d) {
+      return d is string && d.size() == 10 && d.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function isValidCategory(cat) {
+      return cat in ['Fridge', 'Skincare', 'Medicine'];
+    }
+
+    // -------------------------------------------------------------------------
+    // Membership & Role Gates
+    // -------------------------------------------------------------------------
+    function isPantryMember(pantryId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/pantries/$(pantryId)/members/$(request.auth.uid));
+    }
+
+    function isPantryOwner(pantryId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/pantries/$(pantryId)/members/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/pantries/$(pantryId)/members/$(request.auth.uid)).data.role == 'owner' &&
+        get(/databases/$(database)/documents/pantries/$(pantryId)).data.ownerId == request.auth.uid;
+    }
+
+    // -------------------------------------------------------------------------
+    // Validation Blueprints
+    // -------------------------------------------------------------------------
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'activePantryId', 'personalPantryId', 'isAnonymous', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'email', 'activePantryId', 'personalPantryId', 'isAnonymous', 'notificationsEnabled', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == request.auth.uid &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+        isValidId(data.activePantryId) &&
+        isValidId(data.personalPantryId) &&
+        data.isAnonymous is bool &&
+        (!('notificationsEnabled' in data) || data.notificationsEnabled is bool) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPantry(data) {
+      return data.keys().hasAll(['name', 'ownerId', 'inviteCode', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['name', 'ownerId', 'inviteCode', 'createdAt', 'updatedAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+        isValidId(data.ownerId) &&
+        isValidInviteCode(data.inviteCode) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPantryMember(data, memberId) {
+      return data.keys().hasAll(['uid', 'role', 'displayName', 'isAnonymous', 'joinedAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'displayName', 'isAnonymous', 'joinedViaCode', 'joinedAt']) &&
+        isValidId(data.uid) &&
+        data.uid == memberId &&
+        data.role in ['owner', 'member'] &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 60 &&
+        data.isAnonymous is bool &&
+        (!('joinedViaCode' in data) || isValidInviteCode(data.joinedViaCode)) &&
+        data.joinedAt is timestamp;
+    }
+
+    function isValidPantryInvite(data, code) {
+      return data.keys().hasAll(['inviteCode', 'pantryId', 'pantryName', 'ownerId', 'createdAt']) &&
+        data.keys().hasOnly(['inviteCode', 'pantryId', 'pantryName', 'ownerId', 'createdAt']) &&
+        isValidInviteCode(data.inviteCode) &&
+        data.inviteCode == code &&
+        isValidId(data.pantryId) &&
+        data.pantryName is string && data.pantryName.size() >= 1 && data.pantryName.size() <= 60 &&
+        isValidId(data.ownerId) &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll(['name', 'category', 'expiryDate', 'createdBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'name', 'category', 'expiryDate', 'printedExpiryDate',
+          'openedDate', 'paoMonths', 'note', 'brand', 'barcode',
+          'photoUrl', 'createdBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        isValidCategory(data.category) &&
+        isValidDateString(data.expiryDate) &&
+        (!('printedExpiryDate' in data) || isValidDateString(data.printedExpiryDate)) &&
+        (!('openedDate' in data) || isValidDateString(data.openedDate)) &&
+        (!('paoMonths' in data) || (data.paoMonths is int && data.paoMonths >= 1 && data.paoMonths <= 60)) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 120)) &&
+        (!('brand' in data) || (data.brand is string && data.brand.size() <= 80)) &&
+        (!('barcode' in data) || (data.barcode is string && data.barcode.size() <= 32)) &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        isValidId(data.createdBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidShoppingListItem(data) {
+      return data.keys().hasAll(['name', 'category', 'checked', 'addedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['name', 'category', 'checked', 'addedBy', 'createdAt', 'updatedAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        isValidCategory(data.category) &&
+        data.checked is bool &&
+        isValidId(data.addedBy) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWasteEvent(data) {
+      return data.keys().hasAll(['itemName', 'category', 'outcome', 'recordedBy', 'recordedAt']) &&
+        data.keys().hasOnly(['itemName', 'category', 'outcome', 'recordedBy', 'recordedAt']) &&
+        data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 80 &&
+        isValidCategory(data.category) &&
+        data.outcome in ['consumed', 'trashed'] &&
+        isValidId(data.recordedBy) &&
+        data.recordedAt is timestamp;
+    }
+
+    // -------------------------------------------------------------------------
+    // Collection Rules
+    // -------------------------------------------------------------------------
+
+    // 1. User Profiles (strictly private to owner UID)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().personalPantryId == existing().personalPantryId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'activePantryId', 'isAnonymous', 'notificationsEnabled', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // 2. Invite Code Lookup (get-only; never listable)
+    match /invites/{inviteCode} {
+      allow get: if isSignedIn() && isValidInviteCode(inviteCode);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidInviteCode(inviteCode) &&
+        isValidPantryInvite(incoming(), inviteCode) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        existsAfter(/databases/$(database)/documents/pantries/$(incoming().pantryId));
+      allow update: if false;
+      allow delete: if isSignedIn() &&
+        isValidInviteCode(inviteCode) &&
+        existing().ownerId == request.auth.uid;
+    }
+
+    // 3. Household Pantries
+    match /pantries/{pantryId} {
+      allow get: if isValidId(pantryId) && isPantryMember(pantryId);
+      allow list: if false;
+      allow create: if isSignedIn() &&
+        isValidId(pantryId) &&
+        isValidPantry(incoming()) &&
+        incoming().ownerId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        existsAfter(/databases/$(database)/documents/pantries/$(pantryId)/members/$(request.auth.uid));
+      allow update: if isValidId(pantryId) &&
+        isValidPantry(incoming()) &&
+        isPantryOwner(pantryId) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'inviteCode', 'updatedAt']);
+      allow delete: if isValidId(pantryId) && isPantryOwner(pantryId);
+
+      // 3a. Pantry Members Roster
+      match /members/{memberId} {
+        allow get, list: if isValidId(pantryId) && isPantryMember(pantryId);
+        allow create: if isSignedIn() &&
+          isValidId(pantryId) &&
+          isValidId(memberId) &&
+          request.auth.uid == memberId &&
+          isValidPantryMember(incoming(), memberId) &&
+          incoming().joinedAt == request.time &&
+          (
+            // Owner bootstrapping membership atomically with pantry creation
+            (
+              incoming().role == 'owner' &&
+              getAfter(/databases/$(database)/documents/pantries/$(pantryId)).data.ownerId == request.auth.uid
+            ) ||
+            // Invited member joining with matching 6-digit inviteCode
+            (
+              incoming().role == 'member' &&
+              'joinedViaCode' in incoming() &&
+              exists(/databases/$(database)/documents/pantries/$(pantryId)) &&
+              get(/databases/$(database)/documents/pantries/$(pantryId)).data.inviteCode == incoming().joinedViaCode
+            )
+          );
+        allow update: if isSignedIn() &&
+          isValidId(pantryId) &&
+          isValidId(memberId) &&
+          isValidPantryMember(incoming(), memberId) &&
+          request.auth.uid == memberId &&
+          isPantryMember(pantryId) &&
+          incoming().uid == existing().uid &&
+          incoming().role == existing().role &&
+          incoming().joinedAt == existing().joinedAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'isAnonymous']);
+        allow delete: if isValidId(pantryId) &&
+          isValidId(memberId) &&
+          (
+            (isSignedIn() && request.auth.uid == memberId && existing().role == 'member') ||
+            isPantryOwner(pantryId)
+          );
+      }
+
+      // 3b. Pantry Inventory Items
+      match /items/{itemId} {
+        allow get, list: if isValidId(pantryId) && isPantryMember(pantryId);
+        allow create: if isValidId(pantryId) &&
+          isValidId(itemId) &&
+          isPantryMember(pantryId) &&
+          isValidInventoryItem(incoming()) &&
+          incoming().createdBy == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(pantryId) &&
+          isValidId(itemId) &&
+          isPantryMember(pantryId) &&
+          isValidInventoryItem(incoming()) &&
+          incoming().createdBy == existing().createdBy &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'category', 'expiryDate', 'printedExpiryDate',
+            'openedDate', 'paoMonths', 'note', 'brand', 'barcode',
+            'photoUrl', 'updatedAt'
+          ]);
+        allow delete: if isValidId(pantryId) && isValidId(itemId) && isPantryMember(pantryId);
+      }
+
+      // 3c. Auto-Restock Shopping List
+      match /shoppingList/{shopItemId} {
+        allow get, list: if isValidId(pantryId) && isPantryMember(pantryId);
+        allow create: if isValidId(pantryId) &&
+          isValidId(shopItemId) &&
+          isPantryMember(pantryId) &&
+          isValidShoppingListItem(incoming()) &&
+          incoming().addedBy == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time;
+        allow update: if isValidId(pantryId) &&
+          isValidId(shopItemId) &&
+          isPantryMember(pantryId) &&
+          isValidShoppingListItem(incoming()) &&
+          incoming().addedBy == existing().addedBy &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'checked', 'updatedAt']);
+        allow delete: if isValidId(pantryId) && isValidId(shopItemId) && isPantryMember(pantryId);
+      }
+
+      // 3d. Waste Habits History (Consumed vs Trashed)
+      match /history/{eventId} {
+        allow get, list: if isValidId(pantryId) && isPantryMember(pantryId);
+        allow create: if isValidId(pantryId) &&
+          isValidId(eventId) &&
+          isPantryMember(pantryId) &&
+          isValidWasteEvent(incoming()) &&
+          incoming().recordedBy == request.auth.uid &&
+          incoming().recordedAt == request.time;
+        allow update: if false;
+        allow delete: if isValidId(pantryId) && isValidId(eventId) && isPantryOwner(pantryId);
+      }
+    }
+  }
+}
