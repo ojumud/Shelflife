@@ -62,7 +62,9 @@ import {
   addShoppingListItemsBatch,
   bootstrapUserPantry,
   continueWithApple,
+  continueWithGithub,
   continueWithGoogle,
+  continueWithMicrosoft,
   createFamilyPantry,
   deleteShoppingListItem,
   joinPantryByInviteCode,
@@ -225,9 +227,17 @@ export function App() {
     } catch (err) {
       console.error('Failed to bootstrap pantry:', err);
       if (!checkActive || checkActive()) {
-        setWorkspaceSyncError(
-          err instanceof Error ? err.message : 'Unable to sync pantry workspace.'
-        );
+        const msg = err instanceof Error ? err.message : 'Unable to sync pantry workspace.';
+        if (msg.trim().startsWith('{')) {
+          try {
+            const parsed = JSON.parse(msg) as { error?: string };
+            setWorkspaceSyncError(parsed.error || 'Unable to sync pantry workspace.');
+            return;
+          } catch {
+            // fall through
+          }
+        }
+        setWorkspaceSyncError(msg);
       }
     }
   };
@@ -1415,6 +1425,20 @@ export function App() {
           setAuthRevision((rev) => rev + 1);
           await syncWorkspaceForUser(res.user);
           showSimpleToast('Signed in with Apple! Your pantry data is synced.');
+        }}
+        onGithubAuth={async () => {
+          const res = await continueWithGithub();
+          setFirebaseUser(res.user);
+          setAuthRevision((rev) => rev + 1);
+          await syncWorkspaceForUser(res.user);
+          showSimpleToast('Signed in with GitHub! Your pantry data is synced.');
+        }}
+        onMicrosoftAuth={async () => {
+          const res = await continueWithMicrosoft();
+          setFirebaseUser(res.user);
+          setAuthRevision((rev) => rev + 1);
+          await syncWorkspaceForUser(res.user);
+          showSimpleToast('Signed in with Microsoft! Your pantry data is synced.');
         }}
         onEmailSignUp={async (data) => {
           const res = await signUpWithEmail(data);

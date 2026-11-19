@@ -8,6 +8,8 @@ interface AuthModalProps {
   onClose: () => void;
   onGoogleAuth: () => Promise<void>;
   onAppleAuth: () => Promise<void>;
+  onGithubAuth: () => Promise<void>;
+  onMicrosoftAuth: () => Promise<void>;
   onEmailSignUp: (data: { name: string; email: string; password: string }) => Promise<void>;
   onEmailLogIn: (data: { email: string; password: string }) => Promise<void>;
 }
@@ -19,6 +21,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onGoogleAuth,
   onAppleAuth,
+  onGithubAuth,
+  onMicrosoftAuth,
   onEmailSignUp,
   onEmailLogIn,
 }) => {
@@ -27,7 +31,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState<'google' | 'apple' | 'email' | null>(null);
+  const [busy, setBusy] = useState<'google' | 'apple' | 'github' | 'microsoft' | 'email' | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -68,6 +72,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Apple sign-in failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleGithub = async () => {
+    setBusy('github');
+    setError('');
+    try {
+      await onGithubAuth();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'GitHub sign-in failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleMicrosoft = async () => {
+    setBusy('microsoft');
+    setError('');
+    try {
+      await onMicrosoftAuth();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Microsoft sign-in failed.');
     } finally {
       setBusy(null);
     }
@@ -196,13 +226,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* One-Click Google & Apple Buttons */}
-          <div className="space-y-2.5">
+          {/* One-Click OAuth Provider Buttons */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <button
               type="button"
               disabled={busy !== null}
               onClick={() => void handleGoogle()}
-              className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-white border border-zinc-300 text-zinc-900 text-sm font-semibold hover:bg-zinc-50 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xs"
+              className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-white border border-zinc-300 text-zinc-900 text-xs sm:text-sm font-semibold hover:bg-zinc-50 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
             >
               {busy === 'google' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -226,14 +256,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   />
                 </svg>
               )}
-              <span>Continue with Google</span>
+              <span>Google</span>
             </button>
 
             <button
               type="button"
               disabled={busy !== null}
               onClick={() => void handleApple()}
-              className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-950 text-white text-sm font-semibold hover:bg-zinc-900 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xs"
+              className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-zinc-950 border border-zinc-950 text-white text-xs sm:text-sm font-semibold hover:bg-zinc-900 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
             >
               {busy === 'apple' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -242,7 +272,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43Zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45Z" />
                 </svg>
               )}
-              <span>Continue with Apple</span>
+              <span>Apple</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void handleGithub()}
+              className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-[#24292F] border border-[#24292F] text-white text-xs sm:text-sm font-semibold hover:bg-[#1b1f23] active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+            >
+              {busy === 'github' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fillRule="evenodd"
+                    clipRule="evenodd"
+                    d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2Z"
+                  />
+                </svg>
+              )}
+              <span>GitHub</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void handleMicrosoft()}
+              className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-white border border-zinc-300 text-zinc-900 text-xs sm:text-sm font-semibold hover:bg-zinc-50 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+            >
+              {busy === 'microsoft' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#F25022" d="M2 2h9.5v9.5H2z" />
+                  <path fill="#7FBA00" d="M12.5 2H22v9.5h-9.5z" />
+                  <path fill="#00A4EF" d="M2 12.5h9.5V22H2z" />
+                  <path fill="#FFB900" d="M12.5 12.5H22V22h-9.5z" />
+                </svg>
+              )}
+              <span>Microsoft</span>
             </button>
           </div>
 

@@ -106,11 +106,28 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isOwner = Boolean(pantry && currentUid && pantry.ownerId === currentUid);
+  const isAdmin = Boolean(pantry && currentUid && pantry.ownerId === currentUid);
+  const adminMember = members.find(
+    (m) => (pantry && m.uid === pantry.ownerId) || m.role === 'owner'
+  );
   const isSharedActive = Boolean(
     pantry && personalPantryId && pantry.id !== personalPantryId
   );
   const notifState = getNotificationPermissionState();
+
+  const formatActionError = (err: unknown, fallback: string): string => {
+    if (!(err instanceof Error)) return fallback;
+    const raw = err.message.trim();
+    if (raw.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as { error?: string };
+        if (parsed.error) return parsed.error;
+      } catch {
+        // ignore JSON parse errors
+      }
+    }
+    return raw || fallback;
+  };
 
   const handleCopyCode = async () => {
     if (!pantry?.inviteCode) return;
@@ -132,7 +149,7 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
     } catch (err) {
       setFeedback({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Action failed.',
+        text: formatActionError(err, 'Action failed.'),
       });
     } finally {
       setBusyAction(null);
@@ -160,10 +177,10 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
               id="household-modal-title"
               className="font-display text-lg sm:text-xl font-bold text-zinc-900 tracking-tight"
             >
-              Account, Family &amp; Alerts
+              {isSharedActive ? 'Shared Family & Alerts' : 'Create a Shared Family Account'}
             </h2>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Create and link family accounts, assign medicines, and manage reminders
+              Link family accounts with an Admin role, assign medicines, and manage alerts
             </p>
           </div>
           <button
@@ -279,16 +296,16 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
             </div>
           </section>
 
-          {/* 2. Family Groups & Linking Different Accounts (Signed-In Users) */}
+          {/* 2. Shared Family Account & Linked Members */}
           <section className="space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-zinc-900 inline-flex items-center gap-2">
                 <Users className="w-4 h-4 text-zinc-500" />
-                <span>Family Groups &amp; Linked Accounts</span>
+                <span>Shared Family Account</span>
               </h3>
               {isSignedInAccount && pantry && (
-                <span className="text-xs font-medium text-zinc-600">
-                  Role: {isOwner ? 'Owner' : 'Member'}
+                <span className="text-xs font-semibold text-zinc-700">
+                  Role: {isAdmin ? 'Admin' : 'Member'}
                 </span>
               )}
             </div>
@@ -296,7 +313,7 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
             {!isSignedInAccount ? (
               <div className="rounded-2xl border border-zinc-200/90 bg-white p-4 space-y-2.5">
                 <p className="text-xs sm:text-sm text-zinc-600 leading-relaxed">
-                  Sign in with Google, Apple, or email to create a shared family, generate a 6-digit family invite code, link relatives&apos; accounts, and label medicines for each person.
+                  Sign in with Google, Apple, GitHub, Microsoft, or email to create a shared family account, become the Admin, generate a 6-digit invite code, and label medicines per person.
                 </p>
                 <button
                   type="button"
@@ -313,15 +330,13 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
             ) : (
               <div className="rounded-2xl border border-zinc-200/90 bg-white p-4 space-y-4">
                 <p className="text-xs sm:text-sm text-zinc-600 leading-relaxed">
-                  You&apos;re authenticated — create a shared family, share your 6-digit family invite code, link relatives&apos; accounts, and label medicines for each person.
+                  Create a shared family account or link an existing one. Whoever creates the family and adds members is the <strong className="font-semibold text-zinc-900">Admin</strong>.
                 </p>
 
-                {!pantry && (
+                {!pantry && workspaceSyncError && (
                   <div className="rounded-xl bg-zinc-50 border border-zinc-200/80 p-3 flex items-center justify-between gap-3">
                     <span className="text-xs text-zinc-600">
-                      {workspaceSyncError
-                        ? `Could not load synced family workspace (${workspaceSyncError}).`
-                        : 'Syncing your family workspace...'}
+                      Workspace sync needs a refresh. You can retry sync or create a shared family below.
                     </span>
                     {onRetrySync && (
                       <button
@@ -342,12 +357,13 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
                 {families.length > 0 && (
                   <div>
                     <div className="text-xs font-medium text-zinc-500 mb-2">
-                      Your Pantries &amp; Linked Families ({families.length})
+                      Your Pantries &amp; Shared Families ({families.length})
                     </div>
                     <div className="divide-y divide-zinc-100 border border-zinc-200/80 rounded-xl overflow-hidden">
                       {families.map((fam) => {
                         const isActive = fam.pantryId === pantry?.id;
                         const isPersonal = fam.pantryId === personalPantryId;
+                        const roleLabel = fam.role === 'owner' ? 'Admin' : 'Member';
                         return (
                           <div
                             key={fam.pantryId}
@@ -359,8 +375,8 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
                                 <div className="font-medium text-zinc-900 truncate">
                                   {fam.name}
                                 </div>
-                                <div className="text-xs text-zinc-500 capitalize">
-                                  {isPersonal ? 'Personal' : 'Family'} · {fam.role}
+                                <div className="text-xs text-zinc-500">
+                                  {isPersonal ? 'Personal' : 'Shared Family'} · {roleLabel}
                                 </div>
                               </div>
                             </div>
@@ -395,53 +411,61 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
 
                 {/* Active Family / Pantry Details */}
                 {pantry && (
-                  <>
-                    <div className="pt-2 border-t border-zinc-100 space-y-3">
-                      <div className="text-xs font-medium text-zinc-500">
+                  <div className="pt-2 border-t border-zinc-100 space-y-3">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-zinc-500">
                         Active Space: {pantry.name}
+                      </span>
+                      <span className="font-medium text-zinc-600">
+                        Admin: {adminMember?.displayName || (isAdmin ? userDisplayName : 'Creator')}
+                      </span>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={pantryNameDraft}
+                          onChange={(e) => setPantryNameDraft(e.target.value)}
+                          maxLength={60}
+                          aria-label="Active family or pantry name"
+                          className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200 text-sm font-medium text-zinc-900 focus:bg-white focus:border-zinc-900 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={
+                            busyAction === 'rename' ||
+                            !pantryNameDraft.trim() ||
+                            pantryNameDraft.trim() === pantry.name
+                          }
+                          onClick={() =>
+                            void runAction(
+                              'rename',
+                              () => onRenamePantry(pantryNameDraft),
+                              'Name updated.'
+                            )
+                          }
+                          className="min-h-[42px] px-3.5 py-1.5 rounded-xl bg-zinc-900 text-white text-xs font-medium disabled:opacity-40 whitespace-nowrap cursor-pointer"
+                        >
+                          Save
+                        </button>
                       </div>
+                    )}
 
-                      {isOwner && (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={pantryNameDraft}
-                            onChange={(e) => setPantryNameDraft(e.target.value)}
-                            maxLength={60}
-                            aria-label="Active family or pantry name"
-                            className="flex-1 min-h-[42px] px-3 py-1.5 rounded-xl bg-zinc-50 border border-zinc-200 text-sm font-medium text-zinc-900 focus:bg-white focus:border-zinc-900 focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            disabled={
-                              busyAction === 'rename' ||
-                              !pantryNameDraft.trim() ||
-                              pantryNameDraft.trim() === pantry.name
-                            }
-                            onClick={() =>
-                              void runAction(
-                                'rename',
-                                () => onRenamePantry(pantryNameDraft),
-                                'Name updated.'
-                              )
-                            }
-                            className="min-h-[42px] px-3.5 py-1.5 rounded-xl bg-zinc-900 text-white text-xs font-medium disabled:opacity-40 whitespace-nowrap cursor-pointer"
-                          >
-                            Save
-                          </button>
-                        </div>
-                      )}
-
+                    {isAdmin ? (
                       <div className="rounded-xl bg-zinc-50 border border-zinc-200/80 p-3 flex items-center justify-between gap-3">
-                        <div>
+                        <div className="min-w-0">
                           <div className="text-[11px] font-medium text-zinc-500">
-                            6-Digit Family Invite Code
+                            6-Digit Family Invite Code (Admin)
                           </div>
                           <div className="mt-0.5 font-mono tabular-nums text-lg font-bold tracking-widest text-zinc-900">
                             {pantry.inviteCode}
                           </div>
+                          <div className="text-[11px] text-zinc-500 mt-0.5">
+                            Share this code to add family members under your Admin management.
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             onClick={() => void handleCopyCode()}
@@ -454,169 +478,184 @@ export const HouseholdSheetModal: React.FC<HouseholdSheetModalProps> = ({
                             )}
                             <span>{copied ? 'Copied' : 'Copy'}</span>
                           </button>
-                          {isOwner && (
-                            <button
-                              type="button"
-                              disabled={busyAction === 'regen'}
-                              onClick={() =>
-                                void runAction(
-                                  'regen',
-                                  onRegenerateCode,
-                                  'New 6-digit family invite code generated.'
-                                )
-                              }
-                              title="Generate new invite code"
-                              aria-label="Regenerate 6-digit family invite code"
-                              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg bg-white border border-zinc-200 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 cursor-pointer"
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            disabled={busyAction === 'regen'}
+                            onClick={() =>
+                              void runAction(
+                                'regen',
+                                onRegenerateCode,
+                                'New 6-digit family invite code generated.'
+                              )
+                            }
+                            title="Generate new invite code"
+                            aria-label="Regenerate 6-digit family invite code"
+                            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg bg-white border border-zinc-200 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 cursor-pointer"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
+                    ) : (
+                      <div className="rounded-xl bg-zinc-50 border border-zinc-200/80 px-3.5 py-2.5 text-xs text-zinc-600">
+                        Managed by <strong className="font-semibold text-zinc-900">{adminMember?.displayName || 'Family Admin'}</strong> (Admin). Only the Admin who added you can invite or remove accounts.
+                      </div>
+                    )}
 
-                      <div>
-                        <div className="text-xs font-medium text-zinc-500 mb-2">
-                          Linked Family Members ({members.length})
-                        </div>
-                        <div className="divide-y divide-zinc-100 border border-zinc-200/80 rounded-xl overflow-hidden">
-                          {members.map((member) => {
-                            const isSelf = member.uid === currentUid;
-                            return (
-                              <div
-                                key={member.uid}
-                                className="flex items-center justify-between gap-3 px-3.5 py-2.5 bg-white text-sm"
-                              >
-                                <div className="min-w-0">
-                                  <div className="font-medium text-zinc-900 truncate">
+                    <div>
+                      <div className="text-xs font-medium text-zinc-500 mb-2">
+                        Linked Family Accounts ({members.length})
+                      </div>
+                      <div className="divide-y divide-zinc-100 border border-zinc-200/80 rounded-xl overflow-hidden">
+                        {members.map((member) => {
+                          const isSelf = member.uid === currentUid;
+                          const memberIsAdmin =
+                            member.uid === pantry.ownerId || member.role === 'owner';
+                          return (
+                            <div
+                              key={member.uid}
+                              className="flex items-center justify-between gap-3 px-3.5 py-2.5 bg-white text-sm"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-medium text-zinc-900 truncate flex items-center gap-2">
+                                  <span className="truncate">
                                     {member.displayName}
                                     {isSelf ? ' (You)' : ''}
-                                  </div>
-                                  <div className="text-xs text-zinc-500 capitalize">
-                                    {member.role}
-                                  </div>
+                                  </span>
+                                  <span
+                                    className={`text-[11px] font-semibold shrink-0 ${
+                                      memberIsAdmin ? 'text-emerald-700' : 'text-zinc-500'
+                                    }`}
+                                  >
+                                    {memberIsAdmin ? 'Admin' : 'Member'}
+                                  </span>
                                 </div>
-
-                                {isOwner && !isSelf && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void runAction(
-                                        `remove-${member.uid}`,
-                                        () => onRemoveMember(member.uid),
-                                        `Removed ${member.displayName}.`
-                                      )
-                                    }
-                                    aria-label={`Remove ${member.displayName}`}
-                                    className="min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 inline-flex items-center gap-1 cursor-pointer"
-                                  >
-                                    <UserMinus className="w-3.5 h-3.5" />
-                                    <span>Remove</span>
-                                  </button>
-                                )}
-
-                                {!isOwner && isSelf && isSharedActive && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      void runAction(
-                                        'leave',
-                                        onLeavePantry,
-                                        'Left shared family.'
-                                      )
-                                    }
-                                    className="min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 cursor-pointer"
-                                  >
-                                    Leave
-                                  </button>
-                                )}
+                                <div className="text-xs text-zinc-500">
+                                  {memberIsAdmin
+                                    ? 'Creator · Can add or remove family members'
+                                    : 'Added by Admin'}
+                                </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
 
-                    {/* Create a New Family Group */}
-                    <div className="pt-3 border-t border-zinc-100">
-                      <label
-                        htmlFor="create-family-input"
-                        className="block text-xs font-medium text-zinc-700 mb-1.5 inline-flex items-center gap-1.5"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-zinc-500" />
-                        <span>Create a new family group</span>
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="create-family-input"
-                          type="text"
-                          maxLength={60}
-                          value={newFamilyName}
-                          onChange={(e) => setNewFamilyName(e.target.value)}
-                          placeholder="e.g. Ojumu Family"
-                          className="flex-1 min-h-[42px] px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm text-zinc-900 placeholder:text-zinc-400 focus:bg-white focus:border-zinc-900 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          disabled={!newFamilyName.trim() || busyAction === 'create-family'}
-                          onClick={() =>
-                            void runAction(
-                              'create-family',
-                              async () => {
-                                await onCreateFamily(newFamilyName);
-                                setNewFamilyName('');
-                              },
-                              'Created new family! Share its 6-digit code to link family accounts.'
-                            )
-                          }
-                          className="min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-medium hover:bg-zinc-800 disabled:opacity-40 whitespace-nowrap shrink-0 cursor-pointer"
-                        >
-                          {busyAction === 'create-family' ? 'Creating...' : 'Create Family'}
-                        </button>
-                      </div>
-                    </div>
+                              {isAdmin && !isSelf && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void runAction(
+                                      `remove-${member.uid}`,
+                                      () => onRemoveMember(member.uid),
+                                      `Removed ${member.displayName}.`
+                                    )
+                                  }
+                                  aria-label={`Remove ${member.displayName}`}
+                                  className="min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 inline-flex items-center gap-1 cursor-pointer"
+                                >
+                                  <UserMinus className="w-3.5 h-3.5" />
+                                  <span>Remove</span>
+                                </button>
+                              )}
 
-                    {/* Link Another Account with 6-Digit Family Invite Code */}
-                    <div className="pt-3 border-t border-zinc-100">
-                      <label
-                        htmlFor="join-code-input"
-                        className="block text-xs font-medium text-zinc-700 mb-1.5 inline-flex items-center gap-1.5"
-                      >
-                        <KeyRound className="w-3.5 h-3.5 text-zinc-500" />
-                        <span>Link your account to an existing family</span>
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="join-code-input"
-                          type="text"
-                          inputMode="numeric"
-                          maxLength={6}
-                          value={joinCode}
-                          onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))}
-                          placeholder="6-digit family code"
-                          className="flex-1 min-h-[42px] px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm font-mono tabular-nums tracking-widest text-zinc-900 placeholder:tracking-normal placeholder:font-sans placeholder:text-zinc-400 focus:bg-white focus:border-zinc-900 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          disabled={joinCode.length !== 6 || busyAction === 'join'}
-                          onClick={() =>
-                            void runAction(
-                              'join',
-                              async () => {
-                                await onJoinByCode(joinCode);
-                                setJoinCode('');
-                              },
-                              'Linked to family!'
-                            )
-                          }
-                          className="min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-medium hover:bg-zinc-800 disabled:opacity-40 whitespace-nowrap shrink-0 cursor-pointer"
-                        >
-                          {busyAction === 'join' ? 'Linking...' : 'Link Family'}
-                        </button>
+                              {!isAdmin && isSelf && isSharedActive && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void runAction(
+                                      'leave',
+                                      onLeavePantry,
+                                      'Left shared family.'
+                                    )
+                                  }
+                                  className="min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-medium text-red-600 hover:bg-red-50 cursor-pointer"
+                                >
+                                  Leave
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-                  </>
+                  </div>
                 )}
+
+                {/* Create a Shared Family Account (You become Admin) */}
+                <div className="pt-3 border-t border-zinc-100">
+                  <label
+                    htmlFor="create-family-input"
+                    className="block text-xs font-medium text-zinc-700 mb-1.5 inline-flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>Create a shared family account (you&apos;ll be Admin)</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="create-family-input"
+                      type="text"
+                      maxLength={60}
+                      value={newFamilyName}
+                      onChange={(e) => setNewFamilyName(e.target.value)}
+                      placeholder="e.g. Ojumu Family"
+                      className="flex-1 min-h-[42px] px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm text-zinc-900 placeholder:text-zinc-400 focus:bg-white focus:border-zinc-900 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      disabled={!newFamilyName.trim() || busyAction === 'create-family'}
+                      onClick={() =>
+                        void runAction(
+                          'create-family',
+                          async () => {
+                            await onCreateFamily(newFamilyName);
+                            setNewFamilyName('');
+                          },
+                          'Created shared family account! Share the 6-digit code as Admin to add family members.'
+                        )
+                      }
+                      className="min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-medium hover:bg-zinc-800 disabled:opacity-40 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      {busyAction === 'create-family' ? 'Creating...' : 'Create Shared Family'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Link Account with Admin's 6-Digit Family Invite Code */}
+                <div className="pt-3 border-t border-zinc-100">
+                  <label
+                    htmlFor="join-code-input"
+                    className="block text-xs font-medium text-zinc-700 mb-1.5 inline-flex items-center gap-1.5"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>Link your account using an Admin&apos;s 6-digit code</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="join-code-input"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={joinCode}
+                      onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))}
+                      placeholder="6-digit family code"
+                      className="flex-1 min-h-[42px] px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm font-mono tabular-nums tracking-widest text-zinc-900 placeholder:tracking-normal placeholder:font-sans placeholder:text-zinc-400 focus:bg-white focus:border-zinc-900 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      disabled={joinCode.length !== 6 || busyAction === 'join'}
+                      onClick={() =>
+                        void runAction(
+                          'join',
+                          async () => {
+                            await onJoinByCode(joinCode);
+                            setJoinCode('');
+                          },
+                          'Linked to shared family!'
+                        )
+                      }
+                      className="min-h-[42px] px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs sm:text-sm font-medium hover:bg-zinc-800 disabled:opacity-40 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      {busyAction === 'join' ? 'Linking...' : 'Link Family'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </section>
