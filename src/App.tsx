@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { User, onAuthStateChanged } from 'firebase/auth';
+import { User, onIdTokenChanged } from 'firebase/auth';
 import {
   ArrowDownUp,
   Bell,
@@ -17,7 +17,6 @@ import {
   ShoppingBag,
   Undo2,
   UserCheck,
-  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -25,6 +24,7 @@ import {
   CATEGORIES,
   Category,
   CategoryFilter,
+  FamilyLink,
   InventoryItem,
   PantryInfo,
   PantryMember,
@@ -44,6 +44,7 @@ import {
 } from './utils/expiry';
 import {
   checkAndNotifyWithin3Days,
+  getAllNotificationDueItems,
   getExpiringWithin3Days,
   getNotificationPermissionState,
   isRemindersEnabled,
@@ -60,7 +61,9 @@ import {
   addShoppingListItem,
   addShoppingListItemsBatch,
   bootstrapUserPantry,
+  continueWithApple,
   continueWithGoogle,
+  createFamilyPantry,
   deleteShoppingListItem,
   joinPantryByInviteCode,
   leaveSharedPantry,
@@ -74,6 +77,7 @@ import {
   signOutAccount,
   signUpWithEmail,
   subscribePantryWorkspace,
+  subscribeUserFamilies,
   switchActivePantry,
   toggleShoppingListItem,
   tryAnonymousGuestSignIn,
@@ -122,11 +126,14 @@ const FILTER_OPTIONS: { value: CategoryFilter; label: string; icon: React.ReactN
 export function App() {
   // Auth & Household Cloud State
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [, setAuthRevision] = useState(0);
   const [authReady, setAuthReady] = useState(false);
   const [anonymousDisabledHint, setAnonymousDisabledHint] = useState(false);
+  const [workspaceSyncError, setWorkspaceSyncError] = useState<string | null>(null);
   const [activePantryId, setActivePantryId] = useState<string | null>(null);
   const [personalPantryId, setPersonalPantryId] = useState<string | null>(null);
   const [pantryInfo, setPantryInfo] = useState<PantryInfo | null>(null);
+  const [families, setFamilies] = useState<FamilyLink[]>([]);
   const [members, setMembers] = useState<PantryMember[]>([]);
 
   // Local Guest Fallback State
@@ -204,31 +211,45 @@ export function App() {
     }
   }, [localHistory]);
 
+  const syncWorkspaceForUser = async (user: User, checkActive?: () => boolean) => {
+    setWorkspaceSyncError(null);
+    try {
+      const bootstrapped = await bootstrapUserPantry(user, localItemsRef.current);
+      if (checkActive && !checkActive()) return;
+      setActivePantryId(bootstrapped.activePantryId);
+      setPersonalPantryId(bootstrapped.personalPantryId);
+      if (typeof bootstrapped.notificationsEnabled === 'boolean') {
+        setRemindersEnabled(bootstrapped.notificationsEnabled);
+        setRemindersState(bootstrapped.notificationsEnabled);
+      }
+    } catch (err) {
+      console.error('Failed to bootstrap pantry:', err);
+      if (!checkActive || checkActive()) {
+        setWorkspaceSyncError(
+          err instanceof Error ? err.message : 'Unable to sync pantry workspace.'
+        );
+      }
+    }
+  };
+
   // Firebase Auth initialization + Anonymous Guest Mode First
   useEffect(() => {
     let active = true;
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+    const unsubAuth = onIdTokenChanged(auth, async (user) => {
       if (!active) return;
       if (user) {
         setFirebaseUser(user);
+        setAuthRevision((rev) => rev + 1);
         setAuthReady(true);
-        try {
-          const bootstrapped = await bootstrapUserPantry(user, localItemsRef.current);
-          if (!active) return;
-          setActivePantryId(bootstrapped.activePantryId);
-          setPersonalPantryId(bootstrapped.personalPantryId);
-          if (typeof bootstrapped.notificationsEnabled === 'boolean') {
-            setRemindersEnabled(bootstrapped.notificationsEnabled);
-            setRemindersState(bootstrapped.notificationsEnabled);
-          }
-        } catch (err) {
-          console.error('Failed to bootstrap pantry:', err);
-        }
+        await syncWorkspaceForUser(user, () => active);
       } else {
         setFirebaseUser(null);
+        setAuthRevision((rev) => rev + 1);
+        setWorkspaceSyncError(null);
         setActivePantryId(null);
         setPersonalPantryId(null);
         setPantryInfo(null);
+        setFamilies([]);
         setMembers([]);
         setCloudItems([]);
         setCloudShopping([]);
@@ -247,6 +268,13 @@ export function App() {
       unsubAuth();
     };
   }, []);
+
+  // Subscribe to user's private list of personal & linked families
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const unsub = subscribeUserFamilies(firebaseUser.uid, setFamilies);
+    return () => unsub();
+  }, [firebaseUser]);
 
   // Subscribe to active household pantry collections in Firestore
   useEffect(() => {
@@ -384,7 +412,8 @@ export function App() {
         const matchesName = item.name.toLowerCase().includes(q);
         const matchesNote = item.note?.toLowerCase().includes(q) ?? false;
         const matchesCat = item.category.toLowerCase().includes(q);
-        return matchesName || matchesNote || matchesCat;
+        const matchesMember = item.assignedMemberName?.toLowerCase().includes(q) ?? false;
+        return matchesName || matchesNote || matchesCat || matchesMember;
       }
       return true;
     });
@@ -405,6 +434,7 @@ export function App() {
   }, [filteredItems]);
 
   const urgentWithin3Days = useMemo(() => getExpiringWithin3Days(items), [items]);
+  const dueAlerts = useMemo(() => getAllNotificationDueItems(items), [items]);
 
   // Group into Expiring Soon (<7d) and Fresh (>=7d)
   const { expiringSoonItems, freshItems } = useMemo(() => {
@@ -452,6 +482,9 @@ export function App() {
     printedExpiryDate?: string;
     openedDate?: string;
     paoMonths?: number;
+    assignedMemberId?: string;
+    assignedMemberName?: string;
+    earlyReminderDays?: number;
     note?: string;
     brand?: string;
     barcode?: string;
@@ -474,6 +507,9 @@ export function App() {
                 printedExpiryDate: data.printedExpiryDate,
                 openedDate: data.openedDate,
                 paoMonths: data.paoMonths,
+                assignedMemberId: data.assignedMemberId,
+                assignedMemberName: data.assignedMemberName,
+                earlyReminderDays: data.earlyReminderDays,
                 note: data.note,
                 brand: data.brand,
                 barcode: data.barcode,
@@ -491,6 +527,9 @@ export function App() {
         printedExpiryDate: data.printedExpiryDate,
         openedDate: data.openedDate,
         paoMonths: data.paoMonths,
+        assignedMemberId: data.assignedMemberId,
+        assignedMemberName: data.assignedMemberName,
+        earlyReminderDays: data.earlyReminderDays,
         note: data.note,
         brand: data.brand,
         barcode: data.barcode,
@@ -577,6 +616,9 @@ export function App() {
         printedExpiryDate: restored.printedExpiryDate,
         openedDate: restored.openedDate,
         paoMonths: restored.paoMonths,
+        assignedMemberId: restored.assignedMemberId,
+        assignedMemberName: restored.assignedMemberName,
+        earlyReminderDays: restored.earlyReminderDays,
         note: restored.note,
         brand: restored.brand,
         barcode: restored.barcode,
@@ -854,65 +896,33 @@ export function App() {
 
       {/* Main Content */}
       <main id="top" className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8">
-        {/* Friendly Guest Sign-Up Banner + Push Notification Prompt */}
-        {!bannerDismissed && (!remindersEnabled || !isSignedInAccount) && (
+        {/* Push Notification Prompt (only shown to signed-in users) */}
+        {!bannerDismissed && isSignedInAccount && !remindersEnabled && (
           <div className="mb-5 rounded-2xl bg-white border border-zinc-200/90 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-start sm:items-center gap-3 min-w-0">
               <div className="w-9 h-9 rounded-xl bg-zinc-100 text-zinc-800 flex items-center justify-center shrink-0">
-                {!remindersEnabled ? (
-                  <BellRing className="w-4 h-4" />
-                ) : (
-                  <UserPlus className="w-4 h-4" />
-                )}
+                <BellRing className="w-4 h-4" />
               </div>
               <div className="min-w-0 text-xs sm:text-sm text-zinc-700">
-                {!remindersEnabled ? (
-                  <span>
-                    <strong className="font-semibold text-zinc-900">
-                      Get 3-day expiry push alerts:
-                    </strong>{' '}
-                    {urgentWithin3Days.length > 0
-                      ? `Be notified immediately when items like ${urgentWithin3Days[0].name} are within 3 days of expiring.`
-                      : 'Receive a notification with the item name whenever anything is within 3 days of expiring.'}
-                  </span>
-                ) : (
-                  <span>
-                    <strong className="font-semibold text-zinc-900">
-                      Save your pantry across devices:
-                    </strong>{' '}
-                    Create a free account or log in so your inventory stays backed up whenever you return.
-                  </span>
-                )}
+                <span>
+                  <strong className="font-semibold text-zinc-900">
+                    Get 3-day &amp; early medicine alerts:
+                  </strong>{' '}
+                  {dueAlerts.length > 0
+                    ? `Be notified immediately when items like ${dueAlerts[0].name} need attention or early refill.`
+                    : 'Receive a notification with the item name whenever anything is within 3 days of expiring or a medicine reminder is due.'}
+                </span>
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-              {!remindersEnabled ? (
-                <button
-                  type="button"
-                  onClick={() => void handleEnablePushNotifications()}
-                  className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800 whitespace-nowrap cursor-pointer"
-                >
-                  Enable Alerts
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => openAuthModal('login')}
-                    className="min-h-[38px] px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-800 text-xs font-semibold hover:bg-zinc-200 whitespace-nowrap cursor-pointer"
-                  >
-                    Log In
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openAuthModal('signup')}
-                    className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800 whitespace-nowrap cursor-pointer"
-                  >
-                    Sign Up
-                  </button>
-                </>
-              )}
+              <button
+                type="button"
+                onClick={() => void handleEnablePushNotifications()}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800 whitespace-nowrap cursor-pointer"
+              >
+                Enable Alerts
+              </button>
               <button
                 type="button"
                 onClick={() => setBannerDismissed(true)}
@@ -1353,6 +1363,10 @@ export function App() {
         isOpen={isItemModalOpen}
         editingItem={editingItem}
         defaultCategory={defaultModalCategory}
+        members={members}
+        currentUid={firebaseUser?.uid ?? null}
+        isSignedInAccount={isSignedInAccount}
+        onOpenFamilySettings={() => setIsHouseholdOpen(true)}
         onClose={() => {
           setIsItemModalOpen(false);
           setEditingItem(null);
@@ -1389,15 +1403,31 @@ export function App() {
         isGuestDataPresent={items.length > 0}
         onClose={() => setIsAuthOpen(false)}
         onGoogleAuth={async () => {
-          await continueWithGoogle();
+          const res = await continueWithGoogle();
+          setFirebaseUser(res.user);
+          setAuthRevision((rev) => rev + 1);
+          await syncWorkspaceForUser(res.user);
           showSimpleToast('Signed in! Your pantry data is synced.');
         }}
+        onAppleAuth={async () => {
+          const res = await continueWithApple();
+          setFirebaseUser(res.user);
+          setAuthRevision((rev) => rev + 1);
+          await syncWorkspaceForUser(res.user);
+          showSimpleToast('Signed in with Apple! Your pantry data is synced.');
+        }}
         onEmailSignUp={async (data) => {
-          await signUpWithEmail(data);
+          const res = await signUpWithEmail(data);
+          setFirebaseUser(res.user);
+          setAuthRevision((rev) => rev + 1);
+          await syncWorkspaceForUser(res.user);
           showSimpleToast('Account created and pantry saved!');
         }}
         onEmailLogIn={async (data) => {
-          await logInWithEmail(data);
+          const user = await logInWithEmail(data);
+          setFirebaseUser(user);
+          setAuthRevision((rev) => rev + 1);
+          await syncWorkspaceForUser(user);
           showSimpleToast('Welcome back! Loaded your saved pantry.');
         }}
       />
@@ -1405,9 +1435,11 @@ export function App() {
       {/* Household Sharing & Push Notification Settings */}
       <HouseholdSheetModal
         isOpen={isHouseholdOpen}
+        isSignedInAccount={isSignedInAccount}
         isCloudSynced={isCloudSynced}
         anonymousDisabledHint={anonymousDisabledHint}
         isAnonymousUser={Boolean(firebaseUser?.isAnonymous)}
+        workspaceSyncError={workspaceSyncError}
         userDisplayName={
           firebaseUser?.displayName ||
           firebaseUser?.email?.split('@')[0] ||
@@ -1417,23 +1449,36 @@ export function App() {
         currentUid={firebaseUser?.uid ?? null}
         pantry={pantryInfo}
         personalPantryId={personalPantryId}
+        families={families}
         members={members}
         wasteHistory={wasteHistory}
         remindersEnabled={remindersEnabled}
         onClose={() => setIsHouseholdOpen(false)}
         onOpenAuth={(tab) => openAuthModal(tab)}
+        onRetrySync={async () => {
+          if (firebaseUser) {
+            await syncWorkspaceForUser(firebaseUser);
+          }
+        }}
         onSignOut={async () => {
           await signOutAccount();
+        }}
+        onCreateFamily={async (familyName) => {
+          if (!firebaseUser) return;
+          const res = await createFamilyPantry(firebaseUser, familyName);
+          setActivePantryId(res.pantryId);
+          showSimpleToast(`Created "${res.pantryName}"! Code: ${res.inviteCode}`);
         }}
         onJoinByCode={async (code) => {
           if (!firebaseUser) return;
           const res = await joinPantryByInviteCode(firebaseUser, code);
           setActivePantryId(res.pantryId);
+          showSimpleToast(`Linked to "${res.pantryName}"!`);
         }}
-        onSwitchToPersonal={async () => {
-          if (!firebaseUser || !personalPantryId) return;
-          await switchActivePantry(firebaseUser.uid, personalPantryId);
-          setActivePantryId(personalPantryId);
+        onSwitchPantry={async (targetPantryId) => {
+          if (!firebaseUser) return;
+          await switchActivePantry(firebaseUser.uid, targetPantryId);
+          setActivePantryId(targetPantryId);
         }}
         onRegenerateCode={async () => {
           if (!firebaseUser || !pantryInfo) return;
@@ -1441,7 +1486,7 @@ export function App() {
         }}
         onRenamePantry={async (newName) => {
           if (!pantryInfo) return;
-          await renamePantry(pantryInfo.id, newName);
+          await renamePantry(pantryInfo.id, newName, firebaseUser?.uid);
         }}
         onRemoveMember={async (memberId) => {
           if (!pantryInfo) return;

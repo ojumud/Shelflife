@@ -72,6 +72,16 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    function isValidFamilyLink(data, pantryId) {
+      return data.keys().hasAll(['pantryId', 'name', 'role', 'joinedAt']) &&
+        data.keys().hasOnly(['pantryId', 'name', 'role', 'joinedAt']) &&
+        isValidId(data.pantryId) &&
+        data.pantryId == pantryId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+        data.role in ['owner', 'member'] &&
+        data.joinedAt is timestamp;
+    }
+
     function isValidPantry(data) {
       return data.keys().hasAll(['name', 'ownerId', 'inviteCode', 'createdAt', 'updatedAt']) &&
         data.keys().hasOnly(['name', 'ownerId', 'inviteCode', 'createdAt', 'updatedAt']) &&
@@ -109,7 +119,8 @@ service cloud.firestore {
       return data.keys().hasAll(['name', 'category', 'expiryDate', 'createdBy', 'createdAt', 'updatedAt']) &&
         data.keys().hasOnly([
           'name', 'category', 'expiryDate', 'printedExpiryDate',
-          'openedDate', 'paoMonths', 'note', 'brand', 'barcode',
+          'openedDate', 'paoMonths', 'assignedMemberId', 'assignedMemberName',
+          'earlyReminderDays', 'note', 'brand', 'barcode',
           'photoUrl', 'createdBy', 'createdAt', 'updatedAt'
         ]) &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
@@ -118,6 +129,9 @@ service cloud.firestore {
         (!('printedExpiryDate' in data) || isValidDateString(data.printedExpiryDate)) &&
         (!('openedDate' in data) || isValidDateString(data.openedDate)) &&
         (!('paoMonths' in data) || (data.paoMonths is int && data.paoMonths >= 1 && data.paoMonths <= 60)) &&
+        (!('assignedMemberId' in data) || isValidId(data.assignedMemberId)) &&
+        (!('assignedMemberName' in data) || (data.assignedMemberName is string && data.assignedMemberName.size() >= 1 && data.assignedMemberName.size() <= 60)) &&
+        (!('earlyReminderDays' in data) || (data.earlyReminderDays is int && data.earlyReminderDays >= 1 && data.earlyReminderDays <= 60)) &&
         (!('note' in data) || (data.note is string && data.note.size() <= 120)) &&
         (!('brand' in data) || (data.brand is string && data.brand.size() <= 80)) &&
         (!('barcode' in data) || (data.barcode is string && data.barcode.size() <= 32)) &&
@@ -172,6 +186,31 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'activePantryId', 'isAnonymous', 'notificationsEnabled', 'updatedAt']);
       allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      // 1a. Linked Family & Personal Pantries Index (strictly private to owner UID)
+      match /families/{pantryId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(pantryId) && request.auth.uid == userId;
+        allow list: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+        allow create: if isSignedIn() &&
+          isValidId(userId) &&
+          isValidId(pantryId) &&
+          request.auth.uid == userId &&
+          isValidFamilyLink(incoming(), pantryId) &&
+          incoming().joinedAt == request.time &&
+          (
+            exists(/databases/$(database)/documents/pantries/$(pantryId)/members/$(request.auth.uid)) ||
+            existsAfter(/databases/$(database)/documents/pantries/$(pantryId)/members/$(request.auth.uid))
+          );
+        allow update: if isSignedIn() &&
+          isValidId(userId) &&
+          isValidId(pantryId) &&
+          request.auth.uid == userId &&
+          isValidFamilyLink(incoming(), pantryId) &&
+          incoming().pantryId == existing().pantryId &&
+          incoming().joinedAt == existing().joinedAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role']);
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(pantryId) && request.auth.uid == userId;
+      }
     }
 
     // 2. Invite Code Lookup (get-only; never listable)
@@ -190,7 +229,7 @@ service cloud.firestore {
         existing().ownerId == request.auth.uid;
     }
 
-    // 3. Household Pantries
+    // 3. Household & Family Pantries
     match /pantries/{pantryId} {
       allow get: if isValidId(pantryId) && isPantryMember(pantryId);
       allow list: if false;
@@ -210,7 +249,7 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'inviteCode', 'updatedAt']);
       allow delete: if isValidId(pantryId) && isPantryOwner(pantryId);
 
-      // 3a. Pantry Members Roster
+      // 3a. Pantry / Family Members Roster
       match /members/{memberId} {
         allow get, list: if isValidId(pantryId) && isPantryMember(pantryId);
         allow create: if isSignedIn() &&
@@ -270,7 +309,8 @@ service cloud.firestore {
           incoming().updatedAt == request.time &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'name', 'category', 'expiryDate', 'printedExpiryDate',
-            'openedDate', 'paoMonths', 'note', 'brand', 'barcode',
+            'openedDate', 'paoMonths', 'assignedMemberId', 'assignedMemberName',
+            'earlyReminderDays', 'note', 'brand', 'barcode',
             'photoUrl', 'updatedAt'
           ]);
         allow delete: if isValidId(pantryId) && isValidId(itemId) && isPantryMember(pantryId);

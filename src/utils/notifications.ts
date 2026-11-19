@@ -58,9 +58,30 @@ export async function requestReminderPermission(): Promise<NotificationPermissio
   }
 }
 
+export function isItemEarlyReminderDue(item: InventoryItem): boolean {
+  if (typeof item.earlyReminderDays !== 'number' || item.earlyReminderDays < 1) {
+    return false;
+  }
+  return getDaysRemaining(item.expiryDate) <= item.earlyReminderDays;
+}
+
 export function getExpiringWithin3Days(items: InventoryItem[]): InventoryItem[] {
   return items
     .filter((item) => getDaysRemaining(item.expiryDate) <= 3)
+    .sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate));
+}
+
+export function getEarlyReminderDueItems(items: InventoryItem[]): InventoryItem[] {
+  return items
+    .filter((item) => isItemEarlyReminderDue(item))
+    .sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate));
+}
+
+export function getAllNotificationDueItems(items: InventoryItem[]): InventoryItem[] {
+  return items
+    .filter(
+      (item) => getDaysRemaining(item.expiryDate) <= 3 || isItemEarlyReminderDue(item)
+    )
     .sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate));
 }
 
@@ -81,16 +102,35 @@ export function formatThreeDayAlert(urgentItems: InventoryItem[]): {
   if (urgentItems.length === 0) {
     return {
       title: 'Shelfline Expiry Check',
-      body: 'No items are within 3 days of expiring right now.',
+      body: 'No items are within 3 days of expiring or due for early refill right now.',
     };
   }
 
   if (urgentItems.length === 1) {
     const item = urgentItems[0];
     const days = getDaysRemaining(item.expiryDate);
+    const memberSuffix = item.assignedMemberName ? ` (for ${item.assignedMemberName})` : '';
+    const isEarlyWindow =
+      typeof item.earlyReminderDays === 'number' &&
+      days > 3 &&
+      days <= item.earlyReminderDays;
+
+    if (isEarlyWindow) {
+      return {
+        title: `Get Early: ${item.name}${memberSuffix}`,
+        body: `${
+          item.assignedMemberName ? `${item.assignedMemberName}'s ` : ''
+        }${item.name} (${item.category}) ${describeDaysLeft(days)} (${formatReadableDate(
+          item.expiryDate
+        )}) — ${item.earlyReminderDays}-day early reminder.`,
+      };
+    }
+
     return {
-      title: `Expiring Soon: ${item.name}`,
-      body: `${item.name} (${item.category}) ${describeDaysLeft(days)} (${formatReadableDate(
+      title: `Expiring Soon: ${item.name}${memberSuffix}`,
+      body: `${
+        item.assignedMemberName ? `${item.assignedMemberName}'s ` : ''
+      }${item.name} (${item.category}) ${describeDaysLeft(days)} (${formatReadableDate(
         item.expiryDate
       )}).`,
     };
@@ -101,44 +141,58 @@ export function formatThreeDayAlert(urgentItems: InventoryItem[]): {
     .map((item) => {
       const d = getDaysRemaining(item.expiryDate);
       const tag = d < 0 ? 'expired' : d === 0 ? 'today' : `${d}d`;
-      return `${item.name} (${tag})`;
+      const who = item.assignedMemberName ? ` · ${item.assignedMemberName}` : '';
+      return `${item.name}${who} (${tag})`;
     })
     .join(', ');
   const extra = urgentItems.length > 3 ? ` +${urgentItems.length - 3} more` : '';
 
   return {
-    title: `${urgentItems.length} items expiring within 3 days`,
-    body: `${previewList}${extra}. Open Shelfline to use or restock.`,
+    title: `${urgentItems.length} pantry & medicine reminders due`,
+    body: `${previewList}${extra}. Open Shelfline to use or refill early.`,
   };
 }
 
 export function buildExpiryAlertSummary(items: InventoryItem[]): {
   redItems: InventoryItem[];
   yellowItems: InventoryItem[];
+  earlyItems: InventoryItem[];
   title: string;
   body: string;
 } {
   const redItems: InventoryItem[] = [];
   const yellowItems: InventoryItem[] = [];
+  const earlyItems: InventoryItem[] = [];
 
   for (const item of items) {
-    const urgency = getExpiryUrgency(getDaysRemaining(item.expiryDate));
+    const days = getDaysRemaining(item.expiryDate);
+    const urgency = getExpiryUrgency(days);
     if (urgency === 'critical') redItems.push(item);
     else if (urgency === 'warning') yellowItems.push(item);
+
+    if (isItemEarlyReminderDue(item)) {
+      earlyItems.push(item);
+    }
   }
 
   redItems.sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate));
   yellowItems.sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate));
+  earlyItems.sort((a, b) => getDaysRemaining(a.expiryDate) - getDaysRemaining(b.expiryDate));
 
-  if (redItems.length > 0) {
-    const alert = formatThreeDayAlert(redItems);
+  const dueNow = getAllNotificationDueItems(items);
+  if (dueNow.length > 0) {
+    const alert = formatThreeDayAlert(dueNow);
+    const remainingYellow = yellowItems.filter(
+      (y) => !dueNow.some((d) => d.id === y.id)
+    );
     const bodyWithYellow =
-      yellowItems.length > 0
-        ? `${alert.body} Plus ${yellowItems.length} more under a week.`
+      remainingYellow.length > 0
+        ? `${alert.body} Plus ${remainingYellow.length} more under a week.`
         : alert.body;
     return {
       redItems,
       yellowItems,
+      earlyItems,
       title: alert.title,
       body: bodyWithYellow,
     };
@@ -152,6 +206,7 @@ export function buildExpiryAlertSummary(items: InventoryItem[]): {
     return {
       redItems,
       yellowItems,
+      earlyItems,
       title: `Shelfline Check · ${yellowItems.length} item${yellowItems.length === 1 ? '' : 's'} under a week`,
       body: `${names}${yellowItems.length > 2 ? '…' : ''} — plan to use soon.`,
     };
@@ -160,6 +215,7 @@ export function buildExpiryAlertSummary(items: InventoryItem[]): {
   return {
     redItems,
     yellowItems,
+    earlyItems,
     title: 'Shelfline Morning Check',
     body: 'Everything on your shelf is fresh — nothing expiring soon.',
   };
@@ -235,8 +291,8 @@ function saveNotifiedIdsForToday(todayIso: string, ids: Set<string>): void {
 }
 
 /**
- * Checks if any items are within 3 days of expiring and haven't been notified today.
- * Sends a notification explicitly naming the expiring item(s).
+ * Checks if any items are within 3 days of expiring OR within their custom early reminder window.
+ * Sends a notification explicitly naming the item and assigned family member.
  */
 export async function checkAndNotifyWithin3Days(
   items: InventoryItem[],
@@ -248,7 +304,7 @@ export async function checkAndNotifyWithin3Days(
   title: string;
   body: string;
 }> {
-  const urgentItems = getExpiringWithin3Days(items);
+  const urgentItems = getAllNotificationDueItems(items);
   if (urgentItems.length === 0) {
     const emptyAlert = formatThreeDayAlert([]);
     return {

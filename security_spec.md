@@ -2,15 +2,16 @@
 
 ## 1. Data Invariants
 1. **Default-Deny Baseline**: Every unmapped path is explicitly denied (`allow read, write: if false;`).
-2. **Private User Profile Isolation**: `/users/{userId}` is strictly readable and writable only by `request.auth.uid == userId`. No blanket `list` is allowed.
+2. **Private User Profile & Family Links Isolation**: `/users/{userId}` and `/users/{userId}/families/{pantryId}` are strictly readable and writable only by `request.auth.uid == userId`. Creating a `FamilyLink` requires membership in the target pantry (`exists` or `existsAfter` on `/pantries/{pantryId}/members/{request.auth.uid}`).
 3. **Pantry Master Gate**: Access to `/pantries/{pantryId}/items`, `/shoppingList`, and `/history` requires an active membership document at `/pantries/{pantryId}/members/{request.auth.uid}` with role `'owner'` or `'member'`.
 4. **Owner vs Member RBAC**:
    - **Owner**: Creator (`ownerId == request.auth.uid`) can update pantry name/inviteCode, remove any member, or delete the pantry.
    - **Member**: Can read pantry metadata, read/add/edit/delete items, shopping list entries, and waste history, or remove their own membership (leave pantry). Cannot delete the pantry or remove other members.
 5. **Invite Code Integrity**: `/invites/{inviteCode}` forbids `list` queries (`allow list: if false`) so invite codes cannot be scraped. Joining a pantry as a `'member'` requires `joinedViaCode` to match the target pantry's live `inviteCode` (`get(.../pantries/$(pantryId)).data.inviteCode`).
 6. **Immutable Ownership & Temporal Integrity**: `ownerId`, `createdBy`, `addedBy`, `recordedBy`, and `createdAt`/`joinedAt`/`recordedAt` are immutable after creation and validated against `request.auth.uid` and `request.time`.
+7. **Medicine Label & Early Reminder Bounds**: `assignedMemberId` must match `isValidId()`, `assignedMemberName` is bounded to `1..60` chars, and `earlyReminderDays` must be an integer between `1` and `60`.
 
-## 2. Adversarial "Dirty Dozen" Payloads (All Expected: PERMISSION_DENIED)
+## 2. Adversarial "Dirty Dozen" + Family Payloads (All Expected: PERMISSION_DENIED)
 1. **Unauthenticated Item Read**: `GET /pantries/p1/items/i1` with `auth: null`.
 2. **Non-Member Pantry Item Read**: `GET /pantries/p1/items/i1` as `uid: "intruder"` without `/pantries/p1/members/intruder`.
 3. **Blanket Pantry Listing**: `LIST /pantries` by any user (must fail; pantries are resolved via `users/{uid}` or `invites/{code}`).
@@ -23,3 +24,5 @@
 10. **Identity Spoofing on Item**: `CREATE /pantries/p1/items/i2` with `createdBy: "someoneElse"` != `request.auth.uid`.
 11. **Oversized ID Poisoning**: `CREATE /pantries/p1/items/aaaa...` (150 chars or invalid characters like `$`).
 12. **Client-Forged Timestamp**: `CREATE /pantries/p1/items/i2` with `createdAt` set to a past client timestamp instead of `request.time`.
+13. **Unlinked Family Link Forgery**: `CREATE /users/intruder/families/p1` when `intruder` is not a member of `p1`.
+14. **Out-of-Bounds Early Reminder**: `CREATE /pantries/p1/items/med1` with `earlyReminderDays: 365` or `assignedMemberName` > 60 chars.

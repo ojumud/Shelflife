@@ -2,19 +2,35 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, Type } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT) || 3000;
+function resolvePort(): number {
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--port' && argv[i + 1]) {
+      const parsed = Number(argv[i + 1]);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    } else if (arg.startsWith('--port=')) {
+      const parsed = Number(arg.slice('--port='.length));
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  const envPort = Number(process.env.PORT);
+  return Number.isFinite(envPort) && envPort > 0 ? envPort : 3000;
+}
 
-function getGeminiClient(): GoogleGenAI {
+const PORT = resolvePort();
+
+async function getGeminiClient() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured on the server.');
   }
-  return new GoogleGenAI({
+  const { GoogleGenAI, Type } = await import('@google/genai');
+  const ai = new GoogleGenAI({
     apiKey,
     httpOptions: {
       headers: {
@@ -22,6 +38,7 @@ function getGeminiClient(): GoogleGenAI {
       },
     },
   });
+  return { ai, Type };
 }
 
 function formatGeminiError(error: unknown, fallback: string): string {
@@ -157,7 +174,7 @@ Extract the item(s) visible:
 - Parse the exact expiration date into YYYY-MM-DD format. If only Month/Year is printed (like 12/2026), use the last day of that month (2026-12-31). If no date is legible, estimate a reasonable default from ${today} and explain in note.
 - Include the exact printed text found (e.g. "Printed EXP: 12/2026") in the note.`;
 
-      const ai = getGeminiClient();
+      const { ai, Type } = await getGeminiClient();
       const response = await withTransientRetry(() =>
         ai.models.generateContent({
           model: 'gemini-4-hydrogen',
@@ -257,7 +274,7 @@ Extract the item(s) visible:
             .join(', ')
         : '';
 
-      const ai = getGeminiClient();
+      const { ai, Type } = await getGeminiClient();
       const response = await withTransientRetry(() =>
         ai.models.generateContent({
           model: 'gemini-4-hydrogen',
@@ -442,12 +459,21 @@ For each recipe:
 
   // Vite middleware in dev, static dist in production
   if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
+    const vitePromise = import('vite').then(({ createServer: createViteServer }) =>
+      createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      })
+    );
+    vitePromise.catch((err) => {
+      console.error('Failed to initialize Vite dev middleware:', err);
     });
-    app.use(vite.middlewares);
+
+    app.use((req, res, next) => {
+      vitePromise
+        .then((vite) => vite.middlewares(req, res, next))
+        .catch(next);
+    });
   } else {
     const distDir = path.resolve(__dirname, 'dist');
     app.use(express.static(distDir));
@@ -456,8 +482,11 @@ For each recipe:
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Shelfline server listening on http://localhost:${PORT}`);
+  await new Promise<void>((resolve) => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Shelfline server listening on http://localhost:${PORT}`);
+      resolve();
+    });
   });
 }
 

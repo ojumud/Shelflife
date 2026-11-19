@@ -20,12 +20,22 @@ export interface InventoryItem {
   printedExpiryDate?: string; // YYYY-MM-DD optional box/bottle date
   openedDate?: string; // YYYY-MM-DD optional opened date for PAO
   paoMonths?: number; // 1..60 months after opening
+  assignedMemberId?: string; // linked family member UID
+  assignedMemberName?: string; // family member display label (e.g. "Sarah")
+  earlyReminderDays?: number; // 1..60 days before expiry to remind early
   note?: string;
   brand?: string;
   barcode?: string;
   photoUrl?: string;
   createdBy?: string;
   createdAt: number;
+}
+
+export interface FamilyLink {
+  pantryId: string;
+  name: string;
+  role: PantryRole;
+  joinedAt: number;
 }
 
 export interface ShoppingListItem {
@@ -83,3 +93,4 @@ export interface RescueRecipe {
 
 export const CATEGORIES: Category[] = ['Fridge', 'Skincare', 'Medicine'];
 export const PAO_MONTH_OPTIONS = [3, 6, 12, 18, 24] as const;
+export const EARLY_REMINDER_OPTIONS = [7, 14, 21, 30] as const;

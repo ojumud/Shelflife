@@ -1,21 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Barcode,
+  BellRing,
   Clock,
   Droplets,
   Loader2,
   Pill,
   Refrigerator,
   Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import {
   CATEGORIES,
   Category,
+  EARLY_REMINDER_OPTIONS,
   InventoryItem,
   PAO_MONTH_OPTIONS,
+  PantryMember,
 } from '../types/inventory';
 import {
+  addDaysToDateString,
   addDaysToToday,
   addMonthsToDateString,
   computeEffectiveExpiryDate,
@@ -31,6 +36,10 @@ interface ItemSheetModalProps {
   isOpen: boolean;
   editingItem: InventoryItem | null;
   defaultCategory?: Category;
+  members?: PantryMember[];
+  currentUid?: string | null;
+  isSignedInAccount?: boolean;
+  onOpenFamilySettings?: () => void;
   onClose: () => void;
   onSave: (data: {
     id?: string;
@@ -40,6 +49,9 @@ interface ItemSheetModalProps {
     printedExpiryDate?: string;
     openedDate?: string;
     paoMonths?: number;
+    assignedMemberId?: string;
+    assignedMemberName?: string;
+    earlyReminderDays?: number;
     note?: string;
     brand?: string;
     barcode?: string;
@@ -81,6 +93,10 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
   isOpen,
   editingItem,
   defaultCategory = 'Fridge',
+  members = [],
+  currentUid = null,
+  isSignedInAccount = false,
+  onOpenFamilySettings,
   onClose,
   onSave,
   onDelete,
@@ -91,6 +107,13 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
   const [usePao, setUsePao] = useState(false);
   const [openedDate, setOpenedDate] = useState(getTodayDateString());
   const [paoMonths, setPaoMonths] = useState<number>(6);
+
+  const [assignedMemberId, setAssignedMemberId] = useState('');
+  const [assignedMemberName, setAssignedMemberName] = useState('');
+  const [useCustomMemberName, setUseCustomMemberName] = useState(false);
+  const [earlyReminderEnabled, setEarlyReminderEnabled] = useState(false);
+  const [earlyReminderDays, setEarlyReminderDays] = useState<number>(14);
+
   const [note, setNote] = useState('');
   const [brand, setBrand] = useState('');
   const [barcode, setBarcode] = useState('');
@@ -115,6 +138,22 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
       setUsePao(hasPao);
       setOpenedDate(editingItem.openedDate || getTodayDateString());
       setPaoMonths(editingItem.paoMonths || 6);
+
+      const savedMemberId = editingItem.assignedMemberId ?? '';
+      const savedMemberName = editingItem.assignedMemberName ?? '';
+      const matchesLinkedMember = Boolean(
+        savedMemberId && members.some((m) => m.uid === savedMemberId)
+      );
+      setAssignedMemberId(savedMemberId);
+      setAssignedMemberName(savedMemberName);
+      setUseCustomMemberName(Boolean(savedMemberName && !matchesLinkedMember));
+
+      const hasEarly =
+        typeof editingItem.earlyReminderDays === 'number' &&
+        editingItem.earlyReminderDays >= 1;
+      setEarlyReminderEnabled(hasEarly);
+      setEarlyReminderDays(editingItem.earlyReminderDays || 14);
+
       setNote(editingItem.note ?? '');
       setBrand(editingItem.brand ?? '');
       setBarcode(editingItem.barcode ?? '');
@@ -127,6 +166,13 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
       setUsePao(false);
       setOpenedDate(getTodayDateString());
       setPaoMonths(6);
+
+      setAssignedMemberId('');
+      setAssignedMemberName('');
+      setUseCustomMemberName(false);
+      setEarlyReminderEnabled(false);
+      setEarlyReminderDays(14);
+
       setNote('');
       setBrand('');
       setBarcode('');
@@ -139,6 +185,7 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
       nameInputRef.current?.focus();
     }, 60);
     return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editingItem, defaultCategory]);
 
   useEffect(() => {
@@ -165,11 +212,21 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
     ? addMonthsToDateString(openedDate, paoMonths)
     : null;
 
+  const clampedEarlyDays = Math.max(1, Math.min(60, Math.round(earlyReminderDays || 14)));
+  const earlyReminderStartDate = earlyReminderEnabled
+    ? addDaysToDateString(effectiveExpiryDate, -clampedEarlyDays)
+    : null;
+
   const previewDays = getDaysRemaining(effectiveExpiryDate);
   const previewUrgency = getExpiryUrgency(previewDays);
   const previewGroup = getExpiryGroup(previewDays);
   const previewCountdown = formatCountdown(previewDays);
   const previewStyle = PREVIEW_STYLES[previewUrgency];
+
+  const showMedicineFamilySection =
+    category === 'Medicine' ||
+    Boolean(assignedMemberName.trim()) ||
+    earlyReminderEnabled;
 
   const handleBarcodeLookup = async (codeOverride?: string) => {
     const code = (codeOverride ?? barcodeInput).replace(/[^0-9A-Za-z]/g, '');
@@ -225,6 +282,10 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
       return;
     }
 
+    const cleanAssignedName = assignedMemberName.trim().slice(0, 60);
+    const cleanAssignedId =
+      cleanAssignedName && assignedMemberId ? assignedMemberId : undefined;
+
     onSave({
       id: editingItem?.id,
       name: trimmedName,
@@ -233,6 +294,9 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
       printedExpiryDate: printedExpiryDate || undefined,
       openedDate: usePao ? openedDate : undefined,
       paoMonths: usePao ? paoMonths : undefined,
+      assignedMemberId: cleanAssignedId,
+      assignedMemberName: cleanAssignedName || undefined,
+      earlyReminderDays: earlyReminderEnabled ? clampedEarlyDays : undefined,
       note: note.trim() || undefined,
       brand: brand.trim() || undefined,
       barcode: barcode.trim() || undefined,
@@ -358,7 +422,7 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
                   setName(e.target.value);
                   if (error) setError('');
                 }}
-                placeholder="e.g. Greek Yogurt, Retinol Serum, Ibuprofen"
+                placeholder="e.g. Greek Yogurt, Retinol Serum, Ventolin Inhaler"
                 maxLength={80}
                 className="flex-1 min-h-[46px] px-3.5 py-2.5 rounded-xl bg-zinc-50 border border-zinc-200 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:bg-white focus:border-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-900/10 transition-colors"
               />
@@ -398,6 +462,195 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
               })}
             </div>
           </div>
+
+          {/* Family Member Label & Early Refill Reminder (for Medicine) */}
+          {showMedicineFamilySection && (
+            <div className="rounded-xl border border-zinc-200/90 bg-zinc-50/70 p-3.5 space-y-4">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-sm font-medium text-zinc-900 inline-flex items-center gap-1.5">
+                    <Users className="w-4 h-4 text-zinc-500" />
+                    <span>Label for Family Member</span>
+                  </span>
+                  {onOpenFamilySettings && (!isSignedInAccount || members.length <= 1) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenFamilySettings();
+                      }}
+                      className="text-[11px] font-medium text-zinc-600 hover:text-zinc-900 underline underline-offset-2 whitespace-nowrap cursor-pointer"
+                    >
+                      {isSignedInAccount ? 'Link family accounts' : 'Sign in to link family'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignedMemberId('');
+                      setAssignedMemberName('');
+                      setUseCustomMemberName(false);
+                    }}
+                    className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium border whitespace-nowrap transition-colors cursor-pointer ${
+                      !assignedMemberName && !useCustomMemberName
+                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        : 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                    }`}
+                  >
+                    Everyone
+                  </button>
+
+                  {members.map((member) => {
+                    const selected =
+                      !useCustomMemberName &&
+                      assignedMemberId === member.uid &&
+                      Boolean(assignedMemberName);
+                    const label =
+                      member.uid === currentUid
+                        ? `${member.displayName} (You)`
+                        : member.displayName;
+                    return (
+                      <button
+                        key={member.uid}
+                        type="button"
+                        onClick={() => {
+                          setAssignedMemberId(member.uid);
+                          setAssignedMemberName(member.displayName.slice(0, 60));
+                          setUseCustomMemberName(false);
+                        }}
+                        className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium border whitespace-nowrap transition-colors cursor-pointer ${
+                          selected
+                            ? 'bg-zinc-900 text-white border-zinc-900'
+                            : 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUseCustomMemberName(true);
+                      setAssignedMemberId('');
+                    }}
+                    className={`min-h-[38px] px-3 py-1.5 rounded-lg text-xs font-medium border whitespace-nowrap transition-colors cursor-pointer ${
+                      useCustomMemberName
+                        ? 'bg-zinc-900 text-white border-zinc-900'
+                        : 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                    }`}
+                  >
+                    Custom Name
+                  </button>
+                </div>
+
+                {useCustomMemberName && (
+                  <input
+                    type="text"
+                    value={assignedMemberName}
+                    onChange={(e) => setAssignedMemberName(e.target.value)}
+                    placeholder="Enter family member name (e.g. Sarah, Dad)"
+                    maxLength={60}
+                    aria-label="Custom family member name"
+                    className="mt-2.5 w-full min-h-[42px] px-3 py-2 rounded-lg bg-white border border-zinc-200 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none"
+                  />
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-zinc-200/80">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <BellRing className="w-4 h-4 text-zinc-500 shrink-0" />
+                    <div>
+                      <div className="text-sm font-medium text-zinc-900">
+                        Remind to Get It Early
+                      </div>
+                      <div className="text-xs text-zinc-500">
+                        Alert ahead of expiry so you have time to refill
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={earlyReminderEnabled}
+                    aria-label="Toggle early medicine reminder"
+                    onClick={() => setEarlyReminderEnabled((prev) => !prev)}
+                    className={`relative inline-flex h-7 w-12 shrink-0 rounded-full border-2 border-transparent transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900 ${
+                      earlyReminderEnabled ? 'bg-zinc-900' : 'bg-zinc-300'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-sm transition duration-150 ${
+                        earlyReminderEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {earlyReminderEnabled && (
+                  <div className="mt-3 pt-3 border-t border-zinc-200/70 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {EARLY_REMINDER_OPTIONS.map((days) => {
+                          const active = earlyReminderDays === days;
+                          return (
+                            <button
+                              key={days}
+                              type="button"
+                              onClick={() => setEarlyReminderDays(days)}
+                              className={`min-h-[38px] px-3 py-1 rounded-lg text-xs font-mono font-medium border whitespace-nowrap transition-colors cursor-pointer ${
+                                active
+                                  ? 'bg-zinc-900 text-white border-zinc-900'
+                                  : 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-100'
+                              }`}
+                            >
+                              {days}d early
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={earlyReminderDays}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setEarlyReminderDays(Number.isFinite(val) ? val : 14);
+                          }}
+                          aria-label="Custom early reminder days"
+                          className="w-16 min-h-[38px] px-2.5 py-1 rounded-lg bg-white border border-zinc-200 text-xs font-mono tabular-nums text-zinc-900 text-center focus:border-zinc-900 focus:outline-none"
+                        />
+                        <span className="text-xs text-zinc-500">days</span>
+                      </div>
+                    </div>
+
+                    {earlyReminderStartDate && (
+                      <p className="text-xs text-zinc-600 tabular-nums">
+                        Reminder starts{' '}
+                        <strong className="font-semibold text-zinc-900">
+                          {formatReadableDate(earlyReminderStartDate)}
+                        </strong>{' '}
+                        ({clampedEarlyDays}{' '}
+                        {clampedEarlyDays === 1 ? 'day' : 'days'} before expiry
+                        {assignedMemberName.trim()
+                          ? ` for ${assignedMemberName.trim()}`
+                          : ''}
+                        )
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Expiration Date + Quick Offsets */}
           <div>
@@ -540,7 +793,7 @@ export const ItemSheetModal: React.FC<ItemSheetModalProps> = ({
               type="text"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="e.g. Half full, keep refrigerated"
+              placeholder="e.g. Half full, take with food"
               maxLength={120}
               className="w-full min-h-[44px] px-3.5 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-sm text-zinc-900 placeholder:text-zinc-400 focus:bg-white focus:border-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-900/10 transition-colors"
             />

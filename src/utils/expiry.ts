@@ -26,6 +26,18 @@ export function addDaysToToday(offsetDays: number): string {
 }
 
 /**
+ * Adds (or subtracts) a number of days from a YYYY-MM-DD date string in local time.
+ */
+export function addDaysToDateString(baseDateStr: string, offsetDays: number): string {
+  const base = parseLocalDate(baseDateStr);
+  const target = new Date(base.getFullYear(), base.getMonth(), base.getDate() + offsetDays);
+  const year = target.getFullYear();
+  const month = String(target.getMonth() + 1).padStart(2, '0');
+  const day = String(target.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Adds months to a YYYY-MM-DD date string safely (clamping end-of-month).
  */
 export function addMonthsToDateString(baseDateStr: string, months: number): string {

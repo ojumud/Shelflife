@@ -7,6 +7,7 @@ interface AuthModalProps {
   isGuestDataPresent: boolean;
   onClose: () => void;
   onGoogleAuth: () => Promise<void>;
+  onAppleAuth: () => Promise<void>;
   onEmailSignUp: (data: { name: string; email: string; password: string }) => Promise<void>;
   onEmailLogIn: (data: { email: string; password: string }) => Promise<void>;
 }
@@ -17,6 +18,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   isGuestDataPresent,
   onClose,
   onGoogleAuth,
+  onAppleAuth,
   onEmailSignUp,
   onEmailLogIn,
 }) => {
@@ -25,7 +27,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState<'google' | 'email' | null>(null);
+  const [busy, setBusy] = useState<'google' | 'apple' | 'email' | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -53,6 +55,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleApple = async () => {
+    setBusy('apple');
+    setError('');
+    try {
+      await onAppleAuth();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Apple sign-in failed.');
     } finally {
       setBusy(null);
     }
@@ -181,37 +196,55 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* One-Click Google Button */}
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => void handleGoogle()}
-            className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-white border border-zinc-300 text-zinc-900 text-sm font-semibold hover:bg-zinc-50 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xs"
-          >
-            {busy === 'google' ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  fill="#4285F4"
-                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.09.73-2.48 1.16-4.22 1.16-3.25 0-6-2.19-6.98-5.14H1.01v3.14C3.02 21.14 7.21 24 12 24Z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.02 14.01c-.25-.73-.39-1.52-.39-2.33s.14-1.6.39-2.33V6.21H1.01C.37 7.49 0 8.92 0 10.68s.37 3.19 1.01 4.47l4.01-3.14Z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 4.75c1.8 0 3.41.62 4.68 1.83l3.51-3.51C18.07 1.19 15.3 0 12 0 7.21 0 3.02 2.86 1.01 7.01l4.01 3.14c.98-2.95 3.73-5.4 6.98-5.4Z"
-                />
-              </svg>
-            )}
-            <span>Continue with Google</span>
-          </button>
+          {/* One-Click Google & Apple Buttons */}
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void handleGoogle()}
+              className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-white border border-zinc-300 text-zinc-900 text-sm font-semibold hover:bg-zinc-50 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xs"
+            >
+              {busy === 'google' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.09.73-2.48 1.16-4.22 1.16-3.25 0-6-2.19-6.98-5.14H1.01v3.14C3.02 21.14 7.21 24 12 24Z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.02 14.01c-.25-.73-.39-1.52-.39-2.33s.14-1.6.39-2.33V6.21H1.01C.37 7.49 0 8.92 0 10.68s.37 3.19 1.01 4.47l4.01-3.14Z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.8 0 3.41.62 4.68 1.83l3.51-3.51C18.07 1.19 15.3 0 12 0 7.21 0 3.02 2.86 1.01 7.01l4.01 3.14c.98-2.95 3.73-5.4 6.98-5.4Z"
+                  />
+                </svg>
+              )}
+              <span>Continue with Google</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void handleApple()}
+              className="w-full min-h-[46px] px-4 py-2.5 rounded-xl bg-zinc-950 border border-zinc-950 text-white text-sm font-semibold hover:bg-zinc-900 active:scale-[0.99] disabled:opacity-50 inline-flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-xs"
+            >
+              {busy === 'apple' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <svg className="w-4 h-4 shrink-0 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43Zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45Z" />
+                </svg>
+              )}
+              <span>Continue with Apple</span>
+            </button>
+          </div>
 
           <div className="relative flex items-center py-0.5">
             <div className="flex-grow border-t border-zinc-200" />

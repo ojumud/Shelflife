@@ -27,6 +27,7 @@ import {
 } from 'firebase/firestore';
 import {
   OperationType,
+  appleProvider,
   auth,
   db,
   googleProvider,
@@ -35,9 +36,11 @@ import {
 import {
   CATEGORIES,
   Category,
+  FamilyLink,
   InventoryItem,
   PantryInfo,
   PantryMember,
+  PantryRole,
   ShoppingListItem,
   WasteEvent,
 } from '../types/inventory';
@@ -84,6 +87,10 @@ function mapFirebaseAuthError(error: unknown): Error {
   switch (code) {
     case 'auth/email-already-in-use':
       return new Error('An account with this email already exists. Try logging in instead.');
+    case 'auth/account-exists-with-different-credential':
+      return new Error(
+        'An account with this email already exists using a different sign-in method (such as Google or Email). Please sign in with that method first.'
+      );
     case 'auth/invalid-email':
       return new Error('Please enter a valid email address.');
     case 'auth/weak-password':
@@ -95,9 +102,12 @@ function mapFirebaseAuthError(error: unknown): Error {
     case 'auth/operation-not-allowed':
     case 'auth/admin-restricted-operation':
       return new Error(
-        'Email/Password sign-in is not enabled yet in Firebase Console (Authentication > Sign-in method). You can enable it there or use Continue with Google.'
+        'This sign-in method is not enabled yet in Firebase Console (Authentication > Sign-in method). Enable it there or try Continue with Google.'
       );
+    case 'auth/popup-blocked':
+      return new Error('Sign-in popup was blocked by your browser. Please allow popups and try again.');
     case 'auth/popup-closed-by-user':
+    case 'auth/cancelled-popup-request':
       return new Error('Sign-in popup was closed before completing.');
     default:
       return error instanceof Error ? error : new Error('Authentication failed.');
@@ -178,6 +188,41 @@ export async function continueWithGoogle(): Promise<{
 
   try {
     const result = await signInWithPopup(auth, googleProvider);
+    return { user: result.user, linkedFromGuest: false };
+  } catch (error) {
+    throw mapFirebaseAuthError(error);
+  }
+}
+
+export async function continueWithApple(): Promise<{
+  user: User;
+  linkedFromGuest: boolean;
+}> {
+  const current = auth.currentUser;
+  if (current && current.isAnonymous) {
+    try {
+      const result = await linkWithPopup(current, appleProvider);
+      const displayName = (
+        result.user.displayName ||
+        result.user.email?.split('@')[0] ||
+        'Household Member'
+      ).slice(0, 60);
+      await syncMemberIdentity(result.user, displayName);
+      return { user: result.user, linkedFromGuest: true };
+    } catch (error) {
+      const code = (error as { code?: string })?.code || '';
+      if (
+        code !== 'auth/credential-already-in-use' &&
+        code !== 'auth/email-already-in-use'
+      ) {
+        throw mapFirebaseAuthError(error);
+      }
+      // Fall through to standard Apple sign-in for existing account
+    }
+  }
+
+  try {
+    const result = await signInWithPopup(auth, appleProvider);
     return { user: result.user, linkedFromGuest: false };
   } catch (error) {
     throw mapFirebaseAuthError(error);
@@ -288,9 +333,35 @@ export async function bootstrapUserPantry(
       }
     }
 
+    const existingActiveId = String(data.activePantryId);
+    const existingPersonalId = String(data.personalPantryId || data.activePantryId);
+
+    // Ensure private family link index is populated for existing accounts
+    const ensureFamilyLink = async (targetPantryId: string, fallbackRole: PantryRole) => {
+      const linkRef = doc(db, 'users', user.uid, 'families', targetPantryId);
+      const linkSnap = await getDoc(linkRef).catch(() => null);
+      if (linkSnap && linkSnap.exists()) return;
+      const pantrySnap = await getDoc(doc(db, 'pantries', targetPantryId)).catch(() => null);
+      if (!pantrySnap || !pantrySnap.exists()) return;
+      const pData = pantrySnap.data();
+      const role: PantryRole =
+        pData.ownerId === user.uid ? 'owner' : fallbackRole;
+      await setDoc(linkRef, {
+        pantryId: targetPantryId,
+        name: String(pData.name || 'My Pantry').slice(0, 60),
+        role,
+        joinedAt: serverTimestamp(),
+      }).catch(() => {});
+    };
+
+    await ensureFamilyLink(existingPersonalId, 'owner');
+    if (existingActiveId !== existingPersonalId) {
+      await ensureFamilyLink(existingActiveId, 'member');
+    }
+
     return {
-      activePantryId: String(data.activePantryId),
-      personalPantryId: String(data.personalPantryId || data.activePantryId),
+      activePantryId: existingActiveId,
+      personalPantryId: existingPersonalId,
       displayName: latestName,
       notificationsEnabled:
         typeof data.notificationsEnabled === 'boolean'
@@ -348,6 +419,13 @@ export async function bootstrapUserPantry(
     userProfilePayload.email = user.email.slice(0, 120);
   }
   batch.set(userRef, userProfilePayload);
+
+  batch.set(doc(db, 'users', user.uid, 'families', personalPantryId), {
+    pantryId: personalPantryId,
+    name: pantryName,
+    role: 'owner',
+    joinedAt: serverTimestamp(),
+  });
 
   const seedItems =
     localItemsToMigrate && localItemsToMigrate.length > 0
@@ -462,6 +540,10 @@ export function subscribePantryWorkspace(
             printedExpiryDate: d.printedExpiryDate ? String(d.printedExpiryDate) : undefined,
             openedDate: d.openedDate ? String(d.openedDate) : undefined,
             paoMonths: typeof d.paoMonths === 'number' ? d.paoMonths : undefined,
+            assignedMemberId: d.assignedMemberId ? String(d.assignedMemberId) : undefined,
+            assignedMemberName: d.assignedMemberName ? String(d.assignedMemberName) : undefined,
+            earlyReminderDays:
+              typeof d.earlyReminderDays === 'number' ? d.earlyReminderDays : undefined,
             note: d.note ? String(d.note) : undefined,
             brand: d.brand ? String(d.brand) : undefined,
             barcode: d.barcode ? String(d.barcode) : undefined,
@@ -536,6 +618,9 @@ export async function savePantryItem(
     printedExpiryDate?: string;
     openedDate?: string;
     paoMonths?: number;
+    assignedMemberId?: string;
+    assignedMemberName?: string;
+    earlyReminderDays?: number;
     note?: string;
     brand?: string;
     barcode?: string;
@@ -547,6 +632,19 @@ export async function savePantryItem(
   );
   const path = `pantries/${pantryId}/items/${itemId}`;
   const ref = doc(db, 'pantries', pantryId, 'items', itemId);
+
+  const cleanMemberId = data.assignedMemberId
+    ? data.assignedMemberId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 128)
+    : '';
+  const cleanMemberName = data.assignedMemberName
+    ? data.assignedMemberName.trim().slice(0, 60)
+    : '';
+  const validEarlyDays =
+    typeof data.earlyReminderDays === 'number' &&
+    data.earlyReminderDays >= 1 &&
+    data.earlyReminderDays <= 60
+      ? Math.round(data.earlyReminderDays)
+      : undefined;
 
   try {
     if (data.id) {
@@ -562,6 +660,9 @@ export async function savePantryItem(
           typeof data.paoMonths === 'number' && data.paoMonths >= 1 && data.paoMonths <= 60
             ? Math.round(data.paoMonths)
             : deleteField(),
+        assignedMemberId: cleanMemberId || deleteField(),
+        assignedMemberName: cleanMemberName || deleteField(),
+        earlyReminderDays: validEarlyDays ?? deleteField(),
         note: data.note?.trim() ? data.note.trim().slice(0, 120) : deleteField(),
         brand: data.brand?.trim() ? data.brand.trim().slice(0, 80) : deleteField(),
         barcode: data.barcode?.trim() ? data.barcode.trim().slice(0, 32) : deleteField(),
@@ -586,6 +687,11 @@ export async function savePantryItem(
       }
       if (typeof data.paoMonths === 'number' && data.paoMonths >= 1 && data.paoMonths <= 60) {
         createPayload.paoMonths = Math.round(data.paoMonths);
+      }
+      if (cleanMemberId) createPayload.assignedMemberId = cleanMemberId;
+      if (cleanMemberName) createPayload.assignedMemberName = cleanMemberName;
+      if (typeof validEarlyDays === 'number') {
+        createPayload.earlyReminderDays = validEarlyDays;
       }
       if (data.note?.trim()) createPayload.note = data.note.trim().slice(0, 120);
       if (data.brand?.trim()) createPayload.brand = data.brand.trim().slice(0, 80);
@@ -720,13 +826,105 @@ export async function deleteShoppingListItem(
   }
 }
 
+export function subscribeUserFamilies(
+  userId: string,
+  onFamilies: (families: FamilyLink[]) => void
+): () => void {
+  const familiesPath = `users/${userId}/families`;
+  return onSnapshot(
+    query(collection(db, 'users', userId, 'families'), orderBy('joinedAt', 'asc')),
+    (snap) => {
+      const list: FamilyLink[] = snap.docs.map((docSnap) => {
+        const d = docSnap.data();
+        return {
+          pantryId: String(d.pantryId || docSnap.id),
+          name: String(d.name || 'My Pantry'),
+          role: d.role === 'owner' ? 'owner' : 'member',
+          joinedAt: timestampToMs(d.joinedAt),
+        };
+      });
+      onFamilies(list);
+    },
+    (error) => handleFirestoreError(error, OperationType.LIST, familiesPath)
+  );
+}
+
+export async function createFamilyPantry(
+  user: User,
+  rawFamilyName: string
+): Promise<{ pantryId: string; pantryName: string; inviteCode: string }> {
+  if (user.isAnonymous) {
+    throw new Error('Sign up or log in with an account to create a shared family.');
+  }
+
+  const familyName = rawFamilyName.trim().slice(0, 60);
+  if (!familyName) {
+    throw new Error('Enter a family name (e.g. Ojumu Family).');
+  }
+
+  const familyPantryId = sanitizeId(
+    `family_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+  );
+  const inviteCode = generateSixDigitCode();
+  const displayName = (
+    user.displayName ||
+    (user.email ? user.email.split('@')[0] : null) ||
+    'Family Organizer'
+  ).slice(0, 60);
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'pantries', familyPantryId), {
+    name: familyName,
+    ownerId: user.uid,
+    inviteCode,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'pantries', familyPantryId, 'members', user.uid), {
+    uid: user.uid,
+    role: 'owner',
+    displayName,
+    isAnonymous: user.isAnonymous,
+    joinedAt: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'invites', inviteCode), {
+    inviteCode,
+    pantryId: familyPantryId,
+    pantryName: familyName,
+    ownerId: user.uid,
+    createdAt: serverTimestamp(),
+  });
+
+  batch.set(doc(db, 'users', user.uid, 'families', familyPantryId), {
+    pantryId: familyPantryId,
+    name: familyName,
+    role: 'owner',
+    joinedAt: serverTimestamp(),
+  });
+
+  batch.update(doc(db, 'users', user.uid), {
+    activePantryId: familyPantryId,
+    updatedAt: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `pantries/${familyPantryId}`);
+  }
+
+  return { pantryId: familyPantryId, pantryName: familyName, inviteCode };
+}
+
 export async function joinPantryByInviteCode(
   user: User,
   rawCode: string
 ): Promise<{ pantryId: string; pantryName: string }> {
   const code = rawCode.replace(/\D/g, '').slice(0, 6);
   if (!/^\d{6}$/.test(code)) {
-    throw new Error('Enter a valid 6-digit invite code.');
+    throw new Error('Enter a valid 6-digit family invite code.');
   }
 
   const invitePath = `invites/${code}`;
@@ -738,19 +936,21 @@ export async function joinPantryByInviteCode(
   }
 
   if (!inviteSnap.exists()) {
-    throw new Error('No household pantry found for that 6-digit code.');
+    throw new Error('No family or pantry found for that 6-digit code.');
   }
 
   const inviteData = inviteSnap.data();
   const pantryId = String(inviteData.pantryId);
-  const pantryName = String(inviteData.pantryName || 'Shared Pantry');
+  const pantryName = String(inviteData.pantryName || 'Shared Family').slice(0, 60);
   const displayName = (
     user.displayName ||
+    (user.email ? user.email.split('@')[0] : null) ||
     (user.isAnonymous ? 'Guest' : 'Member')
   ).slice(0, 60);
 
   const memberRef = doc(db, 'pantries', pantryId, 'members', user.uid);
   const memberSnap = await getDoc(memberRef).catch(() => null);
+  let resolvedRole: PantryRole = 'member';
 
   if (!memberSnap || !memberSnap.exists()) {
     try {
@@ -765,6 +965,28 @@ export async function joinPantryByInviteCode(
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `pantries/${pantryId}/members/${user.uid}`);
     }
+  } else {
+    resolvedRole = memberSnap.data().role === 'owner' ? 'owner' : 'member';
+  }
+
+  const familyLinkRef = doc(db, 'users', user.uid, 'families', pantryId);
+  const familyLinkSnap = await getDoc(familyLinkRef).catch(() => null);
+  try {
+    if (familyLinkSnap && familyLinkSnap.exists()) {
+      await updateDoc(familyLinkRef, {
+        name: pantryName,
+        role: resolvedRole,
+      });
+    } else {
+      await setDoc(familyLinkRef, {
+        pantryId,
+        name: pantryName,
+        role: resolvedRole,
+        joinedAt: serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/families/${pantryId}`);
   }
 
   try {
@@ -791,7 +1013,11 @@ export async function switchActivePantry(userId: string, targetPantryId: string)
   }
 }
 
-export async function renamePantry(pantryId: string, newName: string): Promise<void> {
+export async function renamePantry(
+  pantryId: string,
+  newName: string,
+  userId?: string
+): Promise<void> {
   const trimmed = newName.trim().slice(0, 60);
   if (!trimmed) return;
   try {
@@ -799,6 +1025,13 @@ export async function renamePantry(pantryId: string, newName: string): Promise<v
       name: trimmed,
       updatedAt: serverTimestamp(),
     });
+    if (userId) {
+      const linkRef = doc(db, 'users', userId, 'families', pantryId);
+      const linkSnap = await getDoc(linkRef).catch(() => null);
+      if (linkSnap && linkSnap.exists()) {
+        await updateDoc(linkRef, { name: trimmed }).catch(() => {});
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `pantries/${pantryId}`);
   }
@@ -851,6 +1084,7 @@ export async function leaveSharedPantry(
 ): Promise<void> {
   const batch = writeBatch(db);
   batch.delete(doc(db, 'pantries', pantryId, 'members', userId));
+  batch.delete(doc(db, 'users', userId, 'families', pantryId));
   batch.update(doc(db, 'users', userId), {
     activePantryId: personalPantryId,
     updatedAt: serverTimestamp(),

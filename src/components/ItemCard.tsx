@@ -133,12 +133,40 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onEdit, onFinish }) =>
 
               <div className="mt-1 flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-xs sm:text-[13px] text-zinc-500">
                 <span className="font-medium text-zinc-700">{item.category}</span>
+                {item.assignedMemberName && (
+                  <>
+                    <span aria-hidden="true" className="text-zinc-300">
+                      ·
+                    </span>
+                    <span className="font-medium text-zinc-800">
+                      For {item.assignedMemberName}
+                    </span>
+                  </>
+                )}
                 <span aria-hidden="true" className="text-zinc-300">
                   ·
                 </span>
                 <span className="tabular-nums">
                   {dateLabel} {formatReadableDate(item.expiryDate)}
                 </span>
+                {typeof item.earlyReminderDays === 'number' && item.earlyReminderDays >= 1 && (
+                  <>
+                    <span aria-hidden="true" className="text-zinc-300">
+                      ·
+                    </span>
+                    <span
+                      className={`tabular-nums ${
+                        daysRemaining <= item.earlyReminderDays
+                          ? 'font-semibold text-amber-700'
+                          : 'font-medium text-zinc-600'
+                      }`}
+                    >
+                      {daysRemaining <= item.earlyReminderDays
+                        ? `Get early (${item.earlyReminderDays}d alert)`
+                        : `Remind ${item.earlyReminderDays}d early`}
+                    </span>
+                  </>
+                )}
                 {item.paoMonths && item.openedDate && (
                   <>
                     <span aria-hidden="true" className="text-zinc-300">

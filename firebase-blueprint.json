@@ -153,9 +153,36 @@
       },
       "required": ["inviteCode", "pantryId", "pantryName", "ownerId", "createdAt"]
     },
+    "FamilyLink": {
+      "title": "FamilyLink",
+      "description": "Private index of personal and shared family pantries a user belongs to.",
+      "type": "object",
+      "properties": {
+        "pantryId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner", "member"]
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["pantryId", "name", "role", "joinedAt"]
+    },
     "InventoryItem": {
       "title": "InventoryItem",
-      "description": "Tracked pantry, fridge, skincare, or medicine item with expiry and optional PAO.",
+      "description": "Tracked pantry, fridge, skincare, or medicine item with expiry, optional PAO, family member label, and early refill reminder.",
       "type": "object",
       "properties": {
         "name": {
@@ -186,6 +213,20 @@
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
         },
         "paoMonths": {
+          "type": "integer"
+        },
+        "assignedMemberId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "assignedMemberName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "earlyReminderDays": {
           "type": "integer"
         },
         "note": {
@@ -292,13 +333,17 @@
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "User profile document private to each authenticated user."
     },
+    "/users/{userId}/families/{pantryId}": {
+      "schema": { "$ref": "#/entities/FamilyLink" },
+      "description": "Private roster of personal and linked family pantries for quick switching."
+    },
     "/pantries/{pantryId}": {
       "schema": { "$ref": "#/entities/Pantry" },
-      "description": "Household pantry root documents."
+      "description": "Household and family pantry root documents."
     },
     "/pantries/{pantryId}/members/{memberId}": {
       "schema": { "$ref": "#/entities/PantryMember" },
-      "description": "Member and owner roster for a household pantry."
+      "description": "Member and owner roster for a household or family pantry."
     },
     "/invites/{inviteCode}": {
       "schema": { "$ref": "#/entities/PantryInvite" },
@@ -306,15 +351,15 @@
     },
     "/pantries/{pantryId}/items/{itemId}": {
       "schema": { "$ref": "#/entities/InventoryItem" },
-      "description": "Tracked expiry items belonging to a pantry."
+      "description": "Tracked expiry items belonging to a pantry or family."
     },
     "/pantries/{pantryId}/shoppingList/{shopItemId}": {
       "schema": { "$ref": "#/entities/ShoppingListItem" },
-      "description": "Restock shopping list items belonging to a pantry."
+      "description": "Restock shopping list items belonging to a pantry or family."
     },
     "/pantries/{pantryId}/history/{eventId}": {
       "schema": { "$ref": "#/entities/WasteEvent" },
-      "description": "Consumed vs trashed waste habit events belonging to a pantry."
+      "description": "Consumed vs trashed waste habit events belonging to a pantry or family."
     }
   }
 }

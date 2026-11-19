@@ -110,4 +110,30 @@ export const DIRTY_DOZEN_SECURITY_CASES = [
     },
     expected: 'PERMISSION_DENIED',
   },
+  {
+    id: 13,
+    name: 'Unlinked family link forgery without pantry membership',
+    auth: { uid: 'intruder_uid' },
+    operation: 'CREATE /users/intruder_uid/families/pantry_1',
+    payload: {
+      pantryId: 'pantry_1',
+      name: 'Stolen Family',
+      role: 'member',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 14,
+    name: 'Out-of-bounds medicine earlyReminderDays',
+    auth: { uid: 'owner_uid' },
+    operation: 'CREATE /pantries/pantry_1/items/med_1',
+    payload: {
+      name: 'Inhaler',
+      category: 'Medicine',
+      expiryDate: '2027-01-01',
+      earlyReminderDays: 365,
+      createdBy: 'owner_uid',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
 ] as const;
